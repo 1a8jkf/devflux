@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "DevFlux",
+    "slug": "DevFlux",
+    "orientation": "portrait",
+    "icon": "./assets/AppIcons/appstore.png",
+    "scheme": "devflux",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/AppIcons/appstore.png"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/AppIcons/playstore.png",
+        "backgroundImage": "./assets/AppIcons/playstore.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.marcos_app0001.DevFlux"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/AppIcons/appstore.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "741af502-8942-42c9-b7c9-2b5f671d3622"
+      }
+    }
+  }
+}
