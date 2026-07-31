@@ -12,8 +12,8 @@ export default function SobreScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.hero}>
         <Image 
-          source={variant === 'dark' ? require('../../assets/icon-black-theme.png') : require('../../assets/icon-white-theme.png')} 
-          style={styles.logo}
+          source={require('../../assets/top-bar-icon.png')} 
+          style={{ width: 48, height: 48, resizeMode: 'contain', marginRight: 16 }} 
         />
         <Text style={styles.title}>CodeFlex</Text>
         <Text style={styles.version}>Versão 1.0.0 (Build 42)</Text>

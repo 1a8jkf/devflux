@@ -18,7 +18,7 @@ import { AIProvider } from '../contexts/AIContext';
 import { CommandPalette } from '../components/CommandPalette';
 import { KeyboardToolbar } from '../components/KeyboardToolbar';
 import { LanguageProvider, useLanguage } from '../contexts/LanguageContext';
-import { RevenueCatProvider } from '../contexts/RevenueCatContext';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MOCK_FILES = [
@@ -320,23 +320,21 @@ export { ErrorBoundary } from 'expo-router';
 
 export default function RootLayout() {
   return (
-    <RevenueCatProvider>
-      <ThemeProvider>
-        <LanguageProvider>
-          <SettingsProvider>
-            <SubscriptionProvider>
-              <AISettingsProvider>
-                <AIProvider>
-                  <CommandPaletteProvider>
-                    <InnerLayout />
-                  </CommandPaletteProvider>
-                </AIProvider>
-              </AISettingsProvider>
-            </SubscriptionProvider>
-          </SettingsProvider>
-        </LanguageProvider>
-      </ThemeProvider>
-    </RevenueCatProvider>
+    <ThemeProvider>
+      <LanguageProvider>
+        <SettingsProvider>
+          <SubscriptionProvider>
+            <AISettingsProvider>
+              <AIProvider>
+                <CommandPaletteProvider>
+                  <InnerLayout />
+                </CommandPaletteProvider>
+              </AIProvider>
+            </AISettingsProvider>
+          </SubscriptionProvider>
+        </SettingsProvider>
+      </LanguageProvider>
+    </ThemeProvider>
   );
 }
 

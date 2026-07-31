@@ -124,7 +124,7 @@ export default function DatabaseConnectionsScreen() {
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Image 
-          source={theme.variant === 'dark' ? require('../../../assets/icon-black-theme.png') : require('../../../assets/icon-white-theme.png')} 
+          source={require('../../../assets/top-bar-icon.png')} 
           style={{ width: 32, height: 32, resizeMode: 'contain', marginRight: 12 }} 
         />
         <View>

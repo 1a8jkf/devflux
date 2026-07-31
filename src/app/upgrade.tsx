@@ -5,22 +5,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { useRevenueCat } from '../contexts/RevenueCatContext';
+import { useSubscription } from '../contexts/SubscriptionContext';
 
 export default function UpgradeScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isPro, presentPaywall, presentCustomerCenter } = useRevenueCat();
+  const { isPro, unlockPro } = useSubscription();
 
   const handlePurchase = async () => {
     if (isPro) return;
-    await presentPaywall();
+    await unlockPro();
+    alert('Mock: Conta Pro Desbloqueada!');
   };
 
   const handleManage = async () => {
-    await presentCustomerCenter();
+    alert('Mock: Gerenciar Assinatura (Módulo de Pagamento Desativado)');
   };
 
   return (

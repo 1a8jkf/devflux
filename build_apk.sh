@@ -83,7 +83,6 @@ fi
 # Compilar o APK Release
 cd android
 chmod +x gradlew
-./gradlew clean
 ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
 
 # Copy to Windows Desktop
