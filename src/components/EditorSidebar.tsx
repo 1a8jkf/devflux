@@ -420,6 +420,25 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
     };
   }, []);
 
+  // Poll for local file system changes
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (projectId) {
+      import('../services/LiveSyncService').then(({ LiveSyncService }) => {
+        if (projectId !== LiveSyncService.syncProjectId) {
+          interval = setInterval(() => {
+            FileSystemService.getProjectFileTree(projectId).then(tree => {
+              setFileTree(tree || []);
+            });
+          }, 2500); // 2.5 seconds refresh rate
+        }
+      });
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [projectId]);
+
   const handleFilePress = (file: any) => {
     if (file.type === 'file') {
       router.setParams({ openFile: file.path, t: Date.now().toString() });

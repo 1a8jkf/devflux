@@ -35,6 +35,8 @@
     "react-dom": "19.2.3",
     "nodejs-mobile-react-native": "^18.20.4",
     "react-native": "0.86.0",
+    "react-native-purchases": "^10.6.0",
+    "react-native-purchases-ui": "^10.6.0",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-reanimated": "^4.5.0",
     "react-native-safe-area-context": "~5.7.0",

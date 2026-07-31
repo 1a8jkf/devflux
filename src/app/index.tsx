@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
@@ -9,6 +9,7 @@ import { FileSystemService, ProjectInfo } from '../services/FileSystemService';
 import { LiveSyncService } from '../services/LiveSyncService';
 import { useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TerminalView, TerminalViewRef } from '../components/TerminalView';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 const SAF = StorageAccessFramework || null;
@@ -69,6 +70,33 @@ export default function WelcomeScreen() {
   const [gitUrl, setGitUrl] = React.useState('');
   const [isDownloading, setIsDownloading] = React.useState(false);
   const [duplicateName, setDuplicateName] = React.useState('');
+  
+  const [showSetupModal, setShowSetupModal] = React.useState(false);
+  const [setupRunning, setSetupRunning] = React.useState(false);
+  const setupTerminalRef = React.useRef<TerminalViewRef>(null);
+  const [alpineInstalled, setAlpineInstalled] = React.useState<boolean | null>(null);
+  const [setupStep, setSetupStep] = React.useState<1 | 2>(1);
+  const [setupLog, setSetupLog] = React.useState('');
+  const [selectedSetupPackages, setSelectedSetupPackages] = React.useState<string[]>(['nodejs', 'npm', 'git']);
+
+  const OPTIONAL_PACKAGES = [
+    { id: 'nodejs', label: 'Node.js', desc: 'Runtime JavaScript' },
+    { id: 'npm', label: 'NPM', desc: 'Gerenciador de pacotes' },
+    { id: 'git', label: 'Git', desc: 'Controle de versão' },
+    { id: 'python3', label: 'Python 3', desc: 'Linguagem de programação' },
+    { id: 'build-base', label: 'Build Tools', desc: 'gcc, make, etc.' },
+    { id: 'curl', label: 'cURL', desc: 'Transferência de dados' },
+    { id: 'wget', label: 'Wget', desc: 'Download de arquivos' },
+    { id: 'nano', label: 'Nano', desc: 'Editor de texto' },
+    { id: 'vim', label: 'Vim', desc: 'Editor avançado' },
+    { id: 'openssh', label: 'OpenSSH', desc: 'Cliente SSH' },
+  ];
+
+  const toggleSetupPackage = (pkgId: string) => {
+    setSelectedSetupPackages(prev =>
+      prev.includes(pkgId) ? prev.filter(p => p !== pkgId) : [...prev, pkgId]
+    );
+  };
 
   const handleProjectOptions = (projectId: string, projectName: string) => {
     Alert.alert(
@@ -93,9 +121,8 @@ export default function WelcomeScreen() {
     );
   };
 
-  useEffect(() => {
-    // Onboarding removido
-  }, []);
+
+
 
   const handlePress = async (id: string, route: string | null) => {
     if (id === 'new') {
@@ -261,6 +288,21 @@ export default function WelcomeScreen() {
       };
       load();
 
+      const checkSetup = async () => {
+        try {
+          const done = await AsyncStorage.getItem('devflux_alpine_installed');
+          if (done === 'true') {
+            setAlpineInstalled(true);
+          } else {
+            setAlpineInstalled(false);
+            setShowSetupModal(true);
+          }
+        } catch(e) {
+          setShowSetupModal(true);
+        }
+      };
+      checkSetup();
+
       const unsubscribeLiveSync = LiveSyncService.subscribe(() => {
         if (LiveSyncService.ws?.readyState === WebSocket.OPEN) {
           setIsLiveSyncActive(true);
@@ -290,6 +332,82 @@ export default function WelcomeScreen() {
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h atrás`;
     return `${Math.floor(hours / 24)}d atrás`;
+  };
+
+  const handleStartSetup = async () => {
+    setSetupRunning(true);
+    setSetupLog('⏳ Instalando Alpine Linux (offline)...\n');
+    try {
+      const { NodeRunner } = await import('../utils/nodeRunner');
+      await NodeRunner.init();
+      const nodejs = require('nodejs-mobile-react-native');
+      
+      const logListener = (msg: string) => {
+        try {
+          const data = JSON.parse(msg);
+          if (data.type === 'LINUX_INSTALL_LOG') {
+            setSetupLog(prev => prev + data.payload);
+          } else if (data.type === 'LINUX_INSTALL_DONE') {
+            setSetupLog(prev => prev + '\n✅ Alpine Linux instalado com sucesso!\n');
+            setAlpineInstalled(true);
+            AsyncStorage.setItem('devflux_alpine_installed', 'true');
+            setSetupStep(2);
+            setSetupRunning(false);
+          } else if (data.type === 'LINUX_INSTALL_ERROR') {
+            setSetupLog(prev => prev + `\n❌ Erro: ${data.payload}\n`);
+            setSetupRunning(false);
+          }
+        } catch(e) {}
+      };
+      nodejs.channel.addListener('message', logListener);
+      nodejs.channel.send(JSON.stringify({ type: 'LINUX_INSTALL', packages: [] }));
+    } catch(e) {
+      setSetupLog(prev => prev + `\n❌ Erro de conexão: ${(e as any)?.message}\n`);
+      setSetupRunning(false);
+    }
+  };
+
+  const handleInstallPackages = async () => {
+    if (selectedSetupPackages.length === 0) {
+      handleFinishSetup();
+      return;
+    }
+    setSetupRunning(true);
+    setSetupLog('📦 Instalando pacotes selecionados...\n(Necessário conexão com a internet)\n\n');
+    try {
+      const { NodeRunner } = await import('../utils/nodeRunner');
+      await NodeRunner.init();
+      const nodejs = require('nodejs-mobile-react-native');
+      const logListener = (msg: string) => {
+        try {
+          const data = JSON.parse(msg);
+          if (data.type === 'LINUX_INSTALL_LOG') {
+            setSetupLog(prev => prev + data.payload);
+          } else if (data.type === 'LINUX_INSTALL_DONE') {
+            setSetupLog(prev => prev + '\n✅ Todos os pacotes instalados!\n');
+            setSetupRunning(false);
+            setTimeout(() => handleFinishSetup(), 1500);
+          } else if (data.type === 'LINUX_INSTALL_ERROR') {
+            setSetupLog(prev => prev + `\n❌ Erro: ${data.payload}\n`);
+            setSetupRunning(false);
+          }
+        } catch(e) {}
+      };
+      nodejs.channel.addListener('message', logListener);
+      nodejs.channel.send(JSON.stringify({ type: 'LINUX_INSTALL', packages: selectedSetupPackages }));
+    } catch(e) {
+      setSetupLog(prev => prev + `\n❌ Erro: ${(e as any)?.message}\n`);
+      setSetupRunning(false);
+    }
+  };
+
+  const handleFinishSetup = async () => {
+    await AsyncStorage.setItem('devflux_alpine_installed', 'true');
+    setAlpineInstalled(true);
+    setShowSetupModal(false);
+    setSetupStep(1);
+    setSetupRunning(false);
+    setSetupLog('');
   };
 
   return (
@@ -506,6 +624,126 @@ export default function WelcomeScreen() {
                 <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>Duplicar Projeto</Text>
               </TouchableOpacity>
             </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+
+    {/* First-Time Setup Modal */}
+    <Modal visible={showSetupModal} transparent animationType="fade">
+      <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
+        <View style={[styles.modalContent, { width: '90%', maxHeight: '85%', borderRadius: 16, paddingTop: 20, paddingBottom: 20, paddingHorizontal: 20 }]}>
+          <View style={{ alignItems: 'center', marginBottom: 16 }}>
+            <View style={{ width: 56, height: 56, borderRadius: 14, backgroundColor: theme.colors.accentBlue + '20', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <Icon name={setupStep === 1 ? 'Terminal' : 'Package'} size={28} color={theme.colors.accentBlue} />
+            </View>
+            <Text style={{ fontFamily: theme.typography.ui, fontSize: 20, fontWeight: 'bold', color: theme.colors.textPrimary, textAlign: 'center', marginBottom: 6 }}>
+              {setupStep === 1 ? 'Instalar Alpine Linux' : 'Dependências Opcionais'}
+            </Text>
+            <Text style={{ fontFamily: theme.typography.ui, fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
+              {setupStep === 1
+                ? 'O Alpine Linux será extraído localmente (sem necessidade de internet). Este passo é obrigatório para usar o terminal e criar projetos.'
+                : 'Selecione os pacotes globais que deseja instalar no terminal Alpine. Você pode pular e fazer isso depois se não tiver internet.'}
+            </Text>
+          </View>
+
+          {/* Step 1: Alpine Installation */}
+          {setupStep === 1 && (
+            <>
+              {setupLog ? (
+                <ScrollView style={{ maxHeight: 180, backgroundColor: '#0D0D0D', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                  <Text style={{ fontFamily: theme.typography.mono, fontSize: 11, color: '#A0AEC0', lineHeight: 18 }}>{setupLog}</Text>
+                </ScrollView>
+              ) : null}
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.bgSurface, alignItems: 'center' }}
+                  onPress={handleFinishSetup}
+                  disabled={setupRunning}
+                >
+                  <Text style={{ fontFamily: theme.typography.ui, color: setupRunning ? theme.colors.textSecondary : theme.colors.textPrimary, fontWeight: 'bold' }}>Pular</Text>
+                </TouchableOpacity>
+                {!setupRunning && (
+                  <TouchableOpacity
+                    style={{ flex: 2, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.accentBlue, alignItems: 'center' }}
+                    onPress={handleStartSetup}
+                  >
+                    <Text style={{ fontFamily: theme.typography.ui, color: '#fff', fontWeight: 'bold' }}>Instalar Alpine Linux</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          )}
+
+          {/* Step 2: Optional Packages Checklist */}
+          {setupStep === 2 && (
+            <>
+              {setupRunning && setupLog ? (
+                <ScrollView style={{ maxHeight: 180, backgroundColor: '#0D0D0D', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                  <Text style={{ fontFamily: theme.typography.mono, fontSize: 11, color: '#A0AEC0', lineHeight: 18 }}>{setupLog}</Text>
+                </ScrollView>
+              ) : (
+                <ScrollView style={{ maxHeight: 260, marginBottom: 16 }}>
+                  {OPTIONAL_PACKAGES.map(pkg => {
+                    const isSelected = selectedSetupPackages.includes(pkg.id);
+                    return (
+                      <TouchableOpacity
+                        key={pkg.id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          marginBottom: 6,
+                          borderRadius: 8,
+                          backgroundColor: isSelected ? theme.colors.accentBlue + '15' : theme.colors.bgSurface,
+                          borderWidth: 1,
+                          borderColor: isSelected ? theme.colors.accentBlue + '50' : theme.colors.border,
+                        }}
+                        onPress={() => toggleSetupPackage(pkg.id)}
+                      >
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 4,
+                          backgroundColor: isSelected ? theme.colors.accentBlue : 'transparent',
+                          borderWidth: isSelected ? 0 : 1.5,
+                          borderColor: theme.colors.textSecondary,
+                          alignItems: 'center', justifyContent: 'center', marginRight: 12,
+                        }}>
+                          {isSelected && <Icon name="Check" size={14} color="#FFF" />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontFamily: theme.typography.ui, fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{pkg.label}</Text>
+                          <Text style={{ fontFamily: theme.typography.ui, fontSize: 11, color: theme.colors.textSecondary, marginTop: 1 }}>{pkg.desc}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.bgSurface, alignItems: 'center' }}
+                  onPress={handleFinishSetup}
+                  disabled={setupRunning}
+                >
+                  <Text style={{ fontFamily: theme.typography.ui, color: setupRunning ? theme.colors.textSecondary : theme.colors.textPrimary, fontWeight: 'bold' }}>
+                    {setupRunning ? 'Aguarde...' : 'Pular'}
+                  </Text>
+                </TouchableOpacity>
+                {!setupRunning && (
+                  <TouchableOpacity
+                    style={{ flex: 2, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.success, alignItems: 'center' }}
+                    onPress={handleInstallPackages}
+                  >
+                    <Text style={{ fontFamily: theme.typography.ui, color: '#fff', fontWeight: 'bold' }}>
+                      {selectedSetupPackages.length > 0 ? `Instalar (${selectedSetupPackages.length})` : 'Apenas Continuar'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
           )}
         </View>
       </View>

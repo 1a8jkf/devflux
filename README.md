@@ -1,56 +1,55 @@
-# Welcome to your Expo app 👋
+<div align="center">
+  <img src="./assets/AppIcons/playstore.png" alt="DevFlux Logo" width="120" />
+  <h1>DevFlux Labs 🧪</h1>
+  <p>O <b>canivete suíço de bolso</b> para desenvolvedores e sysadmins.</p>
+</div>
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+<br/>
 
-## Get started
+## 🚀 Sobre o Projeto
 
-1. Install dependencies
+O **DevFlux** é um aplicativo mobile inovador (SaaS Freemium) focado em colocar o poder de um sistema operacional de servidor inteiro na palma da sua mão. Seja para reiniciar um serviço remotamente, debugar um banco de dados numa viagem ou editar um arquivo essencial na praia, o DevFlux é a sua suíte de sobrevivência técnica.
 
-   ```bash
-   npm install
-   ```
+### Por que ele é único?
+Diferente de clientes SSH comuns, o DevFlux roda um ecossistema **Alpine Linux** real nativamente no seu celular (graças à injeção de C++ via `nodejs-mobile` e `PRoot`).
 
-2. Start the app
+## 🔋 Funcionalidades (Features)
 
-   ```bash
-   npx expo start
-   ```
+- 🐧 **Linux Nativão**: Emulação do ambiente Alpine Linux (PRoot) no fundo.
+- 💻 **Terminal Integrado**: Xterm.js perfeitamente acoplado à API do Android.
+- 📦 **Node.js Pocket**: Rode scripts em Node, Express ou servidores locais direto do aparelho.
+- 🗄️ **Database Manager**: Conecte e inspecione bancos (MariaDB/MySQL, PostgreSQL) (Feature Pro).
+- 🔄 **Live Sync / Cloud Sync**: Sincronize arquivos de configuração e scripts essenciais (Feature Pro).
+- 💵 **Paywall Integrado**: Integração pronta e madura com a infraestrutura do **RevenueCat**.
 
-In the output, you'll find options to open the app in a
+## 🛠️ Arquitetura Técnica
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- **Frontend**: React Native 0.74 (Expo SDK 51)
+- **Engine Core**: `nodejs-mobile-react-native` (customizado)
+- **Camada C/C++**: `libpty-wrapper.so` injetada via JNI para habilitar pty/tty e `libproot.so`.
+- **Estilização**: Tailwind / NativeWind (tema Cyberpunk/Dark-moderno)
+- **Monetização**: `react-native-purchases` (RevenueCat)
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 📦 Como rodar localmente
 
-## Get a fresh project
+Como o projeto envolve bibliotecas pré-compiladas pesadas de C++ em ARM (para rodar no celular físico real e não quebrar no emulador), o fluxo de build é otimizado para produção:
 
-When you're ready, run:
-
+1. Instale as dependências:
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Rode a script de Build Nativa otimizada:
+```bash
+bash build_apk.sh
+```
+> O script fará a compilação do C/C++, pulará o Gradle Linting pesado e ejetará o `app-release.apk`.
 
-### Other setup steps
+## 💼 Modelo de Negócios (Freemium)
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Idealizado para atingir o público Indie Hacker e Freelancers:
+- **Gratuito**: Acesso ao Terminal local, Editor de Texto.
+- **Assinatura (Pro)**: Acesso ilimitado à nuvem, Banco de Dados, Sincronização e Temas avançados. Com ~1% de conversão, já cobre tranquilamente os custos de servidor para rodar o Syncing.
 
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 📄 Licença
+Todos os direitos reservados.

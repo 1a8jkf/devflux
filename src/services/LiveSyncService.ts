@@ -101,7 +101,7 @@ export const LiveSyncService = {
                     try { await FileSystemService.makeDirectory(project.id, cur); } catch(err) {}
                   }
                 }
-                await FileSystemService.writeFile(project.id, data.path, data.content, true);
+                await FileSystemService.writeFile(project.id, data.path, data.content);
                 FileSystemService.notify(); // Refresh Explorer tree
                 if (this.fileResolvers.has(data.path)) {
                   this.fileResolvers.get(data.path)!.resolve(data.content);

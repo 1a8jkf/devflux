@@ -1,5 +1,6 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import { readAsStringAsync, writeAsStringAsync, getInfoAsync, makeDirectoryAsync, deleteAsync, readDirectoryAsync, StorageAccessFramework, documentDirectory } from 'expo-file-system/legacy';
+import { documentDirectory, getInfoAsync, makeDirectoryAsync, writeAsStringAsync, readDirectoryAsync, readAsStringAsync, deleteAsync } from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
+import { StorageAccessFramework } from 'expo-file-system';
 import { Platform } from 'react-native';
 import JSZip from 'jszip';
 import { GithubService } from './GithubService';
@@ -10,18 +11,15 @@ const IS_WEB = Platform.OS === 'web';
 // Root directory for our IDE projects
 export const PROJECTS_ROOT = IS_WEB ? 'DevFluxProjects/' : `${documentDirectory || ''}DevFluxProjects/`;
 
-// SAF access
-const SAF = StorageAccessFramework || null;
-
-export type ProjectType = 'html' | 'node' | 'react' | 'git' | 'saf' | 'blank';
+export type ProjectType = 'html' | 'node' | 'react' | 'git' | 'saf';
 
 export interface ProjectInfo {
   id: string;
   name: string;
   updatedAt: number;
-  type: ProjectType;
+  type: string; // 'html', 'node', 'react', 'git', 'saf'
   githubRepo?: string;
-  safMap?: Record<string, string>; // Maps relative path to SAF URI
+  safMap?: Record<string, string>;
 }
 
 export interface FileNode {
@@ -125,10 +123,6 @@ type Listener = () => void;
 const listeners = new Set<Listener>();
 
 export const FileSystemService = {
-  getProjectPath: async (projectId: string) => {
-    return `${PROJECTS_ROOT}${projectId}/`.replace('file://', '');
-  },
-
   subscribe(listener: Listener) {
     listeners.add(listener);
     return () => listeners.delete(listener);
@@ -136,6 +130,32 @@ export const FileSystemService = {
   
   notify() {
     listeners.forEach(l => l());
+  },
+  
+  getProjectPath(projectId: string): string {
+    return `${PROJECTS_ROOT}${projectId}/`;
+  },
+  
+  async createSAFProject(projectId: string, name: string): Promise<ProjectInfo> {
+    return this.createEmptyProject(projectId, name);
+  },
+  
+  async makeDirectory(projectId: string, path: string): Promise<void> {
+    const projectPath = `${PROJECTS_ROOT}${projectId}/`;
+    if (IS_WEB) {
+      webMakeDirectory(`${projectPath}${path}`);
+    } else {
+      await makeDirectoryAsync(`${projectPath}${path}`, { intermediates: true });
+    }
+    this.notify();
+  },
+  
+  async deleteFile(projectId: string, path: string): Promise<void> {
+    const projectPath = `${PROJECTS_ROOT}${projectId}/`;
+    if (!IS_WEB) {
+      await deleteAsync(`${projectPath}${path}`, { idempotent: true });
+    }
+    this.notify();
   },
   /**
    * Initializes the root directory if it doesn't exist
@@ -159,12 +179,26 @@ export const FileSystemService = {
   /**
    * Creates a new project with basic boilerplate
    */
-  createProject: async (name: string, type: ProjectType = 'html', dependencies: string[] = []) => {
-    await FileSystemService.init();
+  async createProject(name: string, type: 'html' | 'node' | 'react' = 'html', dependencies: string[] = []) {
+    await this.init();
     
-    // Generate a unique ID for the project (lowercase, no spaces)
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
-    const projectPath = `${PROJECTS_ROOT}${id}/`;
+    // Generate clean ID for the project (lowercase, no spaces, no timestamps)
+    let id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'projeto';
+    let projectPath = `${PROJECTS_ROOT}${id}/`;
+    
+    // If project already exists, return it instead of creating a duplicate
+    if (!IS_WEB) {
+      const existsInfo = await getInfoAsync(projectPath);
+      if (existsInfo.exists) {
+        // Return existing project metadata
+        try {
+          const metaStr = await readAsStringAsync(`${projectPath}devflux.json`);
+          return JSON.parse(metaStr) as ProjectInfo;
+        } catch(e) {
+          // Metadata missing, recreate it below
+        }
+      }
+    }
     
     // Create project folder
     if (IS_WEB) {
@@ -227,96 +261,9 @@ export const FileSystemService = {
         await writeAsStringAsync(`${projectPath}script.js`, jsCode);
       }
     } else if (type === 'node') {
-      const packageJson = {
-        name: name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-        version: '1.0.0',
-        main: 'index.js',
-        scripts: {
-          start: 'node index.js'
-        },
-        dependencies: dependencies.reduce((acc, dep) => ({ ...acc, [dep]: '*' }), {})
-      };
-      const indexJsCode = `const http = require('http');
-
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Hello from DevFlux Node API!\\n');
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(\`Server running on port \${PORT}\`);
-});`;
-
-      if (IS_WEB) {
-        webWriteFile(`${projectPath}package.json`, JSON.stringify(packageJson, null, 2));
-        webWriteFile(`${projectPath}index.js`, indexJsCode);
-      } else {
-        await writeAsStringAsync(`${projectPath}package.json`, JSON.stringify(packageJson, null, 2));
-        await writeAsStringAsync(`${projectPath}index.js`, indexJsCode);
-      }
+      // Setup is now handled via terminal wizard in codigo.tsx
     } else if (type === 'react') {
-      const packageJson = {
-        name: name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-        version: '1.0.0',
-        scripts: {
-          dev: 'vite',
-          build: 'vite build',
-          preview: 'vite preview'
-        },
-        dependencies: {
-          react: '^18.2.0',
-          'react-dom': '^18.2.0',
-          ...dependencies.reduce((acc, dep) => ({ ...acc, [dep]: '*' }), {})
-        }
-      };
-      const indexHtmlCode = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${name}</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>`;
-      const mainJsxCode = `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)`;
-      const appJsxCode = `import React from 'react'
-
-function App() {
-  return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
-      <h1>Hello ${name}!</h1>
-      <p>Welcome to your DevFlux React app.</p>
-    </div>
-  )
-}
-
-export default App`;
-
-      if (IS_WEB) {
-        webMakeDirectory(`${projectPath}src/`);
-        webWriteFile(`${projectPath}package.json`, JSON.stringify(packageJson, null, 2));
-        webWriteFile(`${projectPath}index.html`, indexHtmlCode);
-        webWriteFile(`${projectPath}src/main.jsx`, mainJsxCode);
-        webWriteFile(`${projectPath}src/App.jsx`, appJsxCode);
-      } else {
-        await makeDirectoryAsync(`${projectPath}src/`, { intermediates: true });
-        await writeAsStringAsync(`${projectPath}package.json`, JSON.stringify(packageJson, null, 2));
-        await writeAsStringAsync(`${projectPath}index.html`, indexHtmlCode);
-        await writeAsStringAsync(`${projectPath}src/main.jsx`, mainJsxCode);
-        await writeAsStringAsync(`${projectPath}src/App.jsx`, appJsxCode);
-      }
+      // Setup is now handled via terminal wizard in codigo.tsx
     }
     
     FileSystemService.notify();
@@ -340,7 +287,7 @@ export default App`;
     const safMap: Record<string, string> = { '.': directoryUri };
     
     const readSafRecursively = async (uri: string, currentRelativePath: string) => {
-      const files = await SAF.readDirectoryAsync(uri);
+      const files = await StorageAccessFramework.readDirectoryAsync(uri);
       for (const fileUri of files) {
         try {
           const info = await FileSystem.getInfoAsync(fileUri);
@@ -356,7 +303,7 @@ export default App`;
           } else {
             safMap[relativePath] = fileUri;
             try {
-              const content = await SAF.readAsStringAsync(fileUri);
+              const content = await StorageAccessFramework.readAsStringAsync(fileUri);
               await writeAsStringAsync(`${projectPath}${relativePath}`, content);
             } catch(e) {
               await writeAsStringAsync(`${projectPath}${relativePath}`, '');
@@ -384,88 +331,27 @@ export default App`;
   /**
    * Creates an empty project (useful for imports)
    */
-  async createEmptyProject(name: string, type: ProjectType = 'html'): Promise<ProjectInfo> {
-    try {
-      await this.init();
-      
-      const projectId = Math.random().toString(36).substring(2, 10);
-      const projectPath = `${PROJECTS_ROOT}${projectId}/`;
-      
-      const metadata: ProjectInfo = {
-        id: projectId,
-        name,
-        updatedAt: Date.now(),
-        type
-      };
-
-      if (IS_WEB) {
-        webMakeDirectory(projectPath);
-        webWriteFile(`${projectPath}devflux.json`, JSON.stringify(metadata, null, 2));
-      } else {
-        await makeDirectoryAsync(projectPath, { intermediates: true });
-        await writeAsStringAsync(`${projectPath}devflux.json`, JSON.stringify(metadata, null, 2));
-      }
-      
-      this.notify();
-      return metadata;
-    } catch (error) {
-      console.error('Failed to create empty project:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Creates a project linked to an external SAF directory
-   */
-  async createSAFProject(directoryUri: string, folderName: string): Promise<string> {
+  async createEmptyProject(projectId: string, name: string): Promise<ProjectInfo> {
     await this.init();
-    const projectId = Math.random().toString(36).substring(2, 10);
     const projectPath = `${PROJECTS_ROOT}${projectId}/`;
-    
-    if (IS_WEB) {
-      throw new Error('SAF is not supported on Web');
-    }
-    
-    await makeDirectoryAsync(projectPath, { intermediates: true });
     
     const metadata: ProjectInfo = {
       id: projectId,
-      name: folderName,
+      name,
       updatedAt: Date.now(),
-      type: 'saf',
-      safMap: { '.': directoryUri }
+      type: 'html'
     };
-    await writeAsStringAsync(`${projectPath}devflux.json`, JSON.stringify(metadata, null, 2));
-    
-    // Read the directory contents into local cache
-    try {
-      if (!SAF) throw new Error('SAF não disponível');
-      const files = await SAF.readDirectoryAsync(directoryUri);
-      for (const fileUri of files) {
-        try {
-          const info = await FileSystem.getInfoAsync(fileUri);
-          let fileName = fileUri.split('%2F').pop() || 'unknown';
-          fileName = decodeURIComponent(fileName);
-          
-          if (!info.isDirectory) {
-            metadata.safMap![fileName] = fileUri;
-            try {
-              const content = await SAF.readAsStringAsync(fileUri);
-              await writeAsStringAsync(`${projectPath}${fileName}`, content);
-            } catch(e) {
-              await writeAsStringAsync(`${projectPath}${fileName}`, '');
-            }
-          }
-        } catch(e) {}
-      }
-      // Update metadata with SAF map
+
+    if (IS_WEB) {
+      webMakeDirectory(projectPath);
+      webWriteFile(`${projectPath}devflux.json`, JSON.stringify(metadata, null, 2));
+    } else {
+      await makeDirectoryAsync(projectPath, { intermediates: true });
       await writeAsStringAsync(`${projectPath}devflux.json`, JSON.stringify(metadata, null, 2));
-    } catch(e) {
-      console.warn('Failed to read SAF directory contents:', e);
     }
     
     this.notify();
-    return projectId;
+    return metadata;
   },
 
   /**
@@ -641,8 +527,8 @@ export default App`;
     try {
       const metaStr = await readAsStringAsync(`${PROJECTS_ROOT}${projectId}/devflux.json`);
       const meta = JSON.parse(metaStr) as ProjectInfo;
-      if (meta.type === 'saf' && meta.safMap && meta.safMap[filePath]) {
-        if (SAF) return await SAF.readAsStringAsync(meta.safMap[filePath]);
+      if (meta.safMap && meta.safMap[filePath]) {
+        return await StorageAccessFramework.readAsStringAsync(meta.safMap[filePath]);
       }
     } catch(e) {}
     
@@ -652,30 +538,8 @@ export default App`;
   /**
    * Writes content to a file
    */
-  async writeFile(projectId: string, filePath: string, content: string, ignoreSync = false): Promise<void> {
+  async writeFile(projectId: string, filePath: string, content: string): Promise<void> {
     const fullPath = `${PROJECTS_ROOT}${projectId}/${filePath}`;
-    
-    // Trigger LiveSync if it's the LiveSync Workspace and not ignoring sync
-    if (!ignoreSync) {
-      import('./LiveSyncService').then(({ LiveSyncService }) => {
-        if (LiveSyncService.syncProjectId === projectId) {
-          LiveSyncService.sendFileUpdate(filePath, content);
-        }
-      });
-    }
-
-    // Ensure parent directories exist before writing
-    const lastSlash = filePath.lastIndexOf('/');
-    if (lastSlash > 0) {
-      const dirPath = filePath.substring(0, lastSlash);
-      const fullDirPath = `${PROJECTS_ROOT}${projectId}/${dirPath}`;
-      if (IS_WEB) {
-        webMakeDirectory(fullDirPath);
-      } else {
-        await makeDirectoryAsync(fullDirPath, { intermediates: true });
-      }
-    }
-
     if (IS_WEB) {
       webWriteFile(fullPath, content);
     } else {
@@ -684,17 +548,20 @@ export default App`;
         const metaStr = await readAsStringAsync(`${PROJECTS_ROOT}${projectId}/devflux.json`);
         const meta = JSON.parse(metaStr) as ProjectInfo;
         if (meta.safMap && meta.safMap[filePath]) {
-          if (SAF) await SAF.writeAsStringAsync(meta.safMap[filePath], content);
-        } else if (meta.type === 'saf' && meta.safMap && SAF) {
+          await StorageAccessFramework.writeAsStringAsync(meta.safMap[filePath], content);
+        } else if (meta.type === 'saf' && meta.safMap) {
           // Handle new file creation in external folder
           const parts = filePath.split('/');
           const fileName = parts.pop() || filePath;
-          const parentUri = meta.safMap['.'];
-          const mimeType = fileName.endsWith('.js') || fileName.endsWith('.ts') ? 'text/javascript' : (fileName.endsWith('.json') ? 'application/json' : 'text/plain');
-          const newUri = await SAF.createFileAsync(parentUri, fileName, mimeType);
-          meta.safMap[filePath] = newUri;
-          await writeAsStringAsync(`${PROJECTS_ROOT}${projectId}/devflux.json`, JSON.stringify(meta, null, 2));
-          await SAF.writeAsStringAsync(newUri, content);
+          const parentDir = parts.length > 0 ? parts.join('/') : '';
+          const parentUri = parentDir === '' ? meta.safMap['.'] : meta.safMap[parentDir];
+          if (parentUri) {
+            const mimeType = fileName.endsWith('.json') ? 'application/json' : fileName.endsWith('.html') ? 'text/html' : fileName.endsWith('.js') ? 'text/javascript' : 'text/plain';
+            const newUri = await StorageAccessFramework.createFileAsync(parentUri, fileName, mimeType);
+            meta.safMap[filePath] = newUri;
+            await writeAsStringAsync(`${PROJECTS_ROOT}${projectId}/devflux.json`, JSON.stringify(meta, null, 2));
+            await StorageAccessFramework.writeAsStringAsync(newUri, content);
+          }
         }
       } catch(e) {}
     }
@@ -715,42 +582,8 @@ export default App`;
         await writeAsStringAsync(metaPath, JSON.stringify(meta, null, 2));
       }
     } catch (e) {
-      // Ignore
+      // Ignore if metadata update fails
     }
-    
-    this.notify();
-  },
-
-  /**
-   * Deletes a file or directory
-   */
-  async deleteFile(projectId: string, filePath: string): Promise<void> {
-    const fullPath = `${PROJECTS_ROOT}${projectId}/${filePath}`;
-    if (IS_WEB) {
-      const vfs = getWebVFS();
-      const keys = Object.keys(vfs);
-      for (const key of keys) {
-        if (key === fullPath || key.startsWith(`${fullPath}/`)) {
-          delete vfs[key];
-        }
-      }
-    } else {
-      await deleteAsync(fullPath, { idempotent: true });
-    }
-    this.notify();
-  },
-
-  /**
-   * Creates a directory
-   */
-  async makeDirectory(projectId: string, dirPath: string): Promise<void> {
-    const fullPath = `${PROJECTS_ROOT}${projectId}/${dirPath}`;
-    if (IS_WEB) {
-      webMakeDirectory(fullPath);
-    } else {
-      await makeDirectoryAsync(fullPath, { intermediates: true });
-    }
-    this.notify();
   },
 
   /**
@@ -808,7 +641,7 @@ export default App`;
   },
 
   /**
-   * Clones a GitHub repository using isomorphic-git
+   * Downloads a GitHub repository as a Zipball and extracts it into a new project
    */
   async downloadGitRepo(repoUrl: string): Promise<string> {
     // Expected format: https://github.com/facebook/react or facebook/react
@@ -831,6 +664,7 @@ export default App`;
 
     if (!owner || !repo) throw new Error('Não foi possível identificar o usuário e o repositório');
 
+    const zipUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/main`;
     const projectName = repo;
     const projectId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
     const projectPath = `${PROJECTS_ROOT}${projectId}/`;
@@ -859,18 +693,61 @@ export default App`;
       await writeAsStringAsync(`${projectPath}devflux.json`, metaContent);
     }
 
-    // 3. Clone repository using isomorphic-git
-    try {
-      const cloneUrl = `https://github.com/${owner}/${repo}.git`;
-      await GitService.clone(projectId, cloneUrl, 'main');
-    } catch (e: any) {
-      // Cleanup if failed
-      if (IS_WEB) {
-        delete getWebVFS()[projectPath];
-      } else {
-        await deleteAsync(projectPath, { idempotent: true });
+    // 3. Fetch zipball
+    // Note: 'main' branch might fail if the default branch is 'master'. We try 'main' first.
+    let response = await fetch(zipUrl);
+    if (!response.ok && response.status === 404) {
+      // Fallback to master
+      response = await fetch(`https://api.github.com/repos/${owner}/${repo}/zipball/master`);
+      if (!response.ok) throw new Error('Falha ao baixar o repositório. O repositório é público e possui branch main/master?');
+    } else if (!response.ok) {
+      throw new Error('Falha ao comunicar com o GitHub');
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    // 4. Extract files
+    // GitHub zipballs have a root folder like owner-repo-commitHash/
+    // We need to strip that first directory from the path
+    const entries = Object.values(zip.files);
+    
+    // Find the root folder name (the first part of the path of any file)
+    let rootFolderName = '';
+    if (entries.length > 0) {
+      rootFolderName = entries[0].name.split('/')[0] + '/';
+    }
+
+    for (const entry of entries) {
+      if (entry.dir) continue;
+      
+      const relativePath = entry.name.replace(rootFolderName, '');
+      if (!relativePath) continue; // Skip if it somehow matches the root folder exactly
+
+      // Get content
+      const content = await entry.async('string');
+      
+      // Ensure directory exists for this file
+      const pathParts = relativePath.split('/');
+      pathParts.pop(); // remove file name
+      if (pathParts.length > 0) {
+        let currentDir = '';
+        for (const part of pathParts) {
+          currentDir += (currentDir ? '/' : '') + part;
+          if (IS_WEB) {
+            webMakeDirectory(`${projectPath}${currentDir}`);
+          } else {
+            await makeDirectoryAsync(`${projectPath}${currentDir}`, { intermediates: true });
+          }
+        }
       }
-      throw new Error(`Falha ao clonar repositório: ${e.message}`);
+
+      // Write file
+      if (IS_WEB) {
+        webWriteFile(`${projectPath}${relativePath}`, content);
+      } else {
+        await writeAsStringAsync(`${projectPath}${relativePath}`, content);
+      }
     }
 
     this.notify();

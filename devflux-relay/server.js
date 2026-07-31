@@ -1,12 +1,104 @@
+const http = require('http');
 const { WebSocketServer } = require('ws');
+const { Client } = require('pg');
 
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocketServer({ port: PORT });
+
+// Helper para CORS e JSON response
+function sendJson(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  });
+  res.end(JSON.stringify(data));
+}
+
+const server = http.createServer(async (req, res) => {
+  // CORS Preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    });
+    return res.end();
+  }
+
+  // Health check endpoint
+  if (req.method === 'GET' && req.url === '/health') {
+    return sendJson(res, 200, { status: 'online', service: 'DevFlux Cloud Relay & SQL Proxy', timestamp: new Date() });
+  }
+
+  // SQL Proxy Endpoint: POST /api/db/query
+  if (req.method === 'POST' && req.url === '/api/db/query') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const { host, port, user, password, database, connectionString, query, params } = data;
+
+        if (!query) {
+          return sendJson(res, 400, { error: 'O parâmetro "query" é obrigatório.' });
+        }
+        if (!connectionString && (!host || !user || !database)) {
+          return sendJson(res, 400, { error: 'Parâmetros de conexão do banco incompletos (host, user, database ou connectionString).' });
+        }
+
+        const client = new Client({
+          host,
+          port: Number(port) || 5432,
+          user,
+          password,
+          database,
+          connectionString,
+          ssl: { rejectUnauthorized: false } // Permite conexão SSL com AWS RDS / Supabase / Nuvem
+        });
+
+        try {
+          await client.connect();
+          const result = await client.query(query, params || []);
+          
+          let columns = [];
+          let rows = [];
+
+          if (result.fields) {
+            columns = result.fields.map(f => f.name);
+          }
+          if (result.rows) {
+            rows = result.rows.map(row => columns.map(col => row[col]));
+          }
+
+          return sendJson(res, 200, { columns, rows, rowCount: result.rowCount });
+        } catch (dbErr) {
+          console.error('❌ [SQL Proxy Error]:', dbErr.message || dbErr);
+          return sendJson(res, 400, { error: dbErr.message || String(dbErr) });
+        } finally {
+          await client.end().catch(() => {});
+        }
+      } catch (err) {
+        console.error('❌ [Proxy Parse Error]:', err.message);
+        return sendJson(res, 500, { error: 'Erro interno ao processar requisição do Proxy SQL.' });
+      }
+    });
+    return;
+  }
+
+  // Default 404 for other HTTP requests
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('DevFlux Relay Server - WebSocket & SQL Proxy active on port ' + PORT);
+});
+
+const wss = new WebSocketServer({ server });
 
 // Armazena as salas ativas: { [roomId]: { pc: ws, app: ws } }
 const rooms = {};
 
-console.log(`☁️  DevFlux Cloud Relay Server rodando na porta ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`☁️  DevFlux Cloud Relay & SQL Proxy rodando na porta ${PORT}`);
+});
 
 wss.on('connection', (ws) => {
   ws.on('message', (message) => {
@@ -52,7 +144,7 @@ wss.on('connection', (ws) => {
         }
       }
     } catch (err) {
-      console.error('Erro ao processar mensagem:', err.message);
+      console.error('Erro ao processar mensagem WS:', err.message);
     }
   });
 
@@ -76,3 +168,4 @@ wss.on('connection', (ws) => {
     }
   });
 });
+

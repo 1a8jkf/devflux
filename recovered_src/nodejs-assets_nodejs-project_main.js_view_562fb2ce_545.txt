@@ -1,0 +1,134 @@
+Created At: 2026-07-27T01:48:29Z
+Completed At: 2026-07-27T01:48:29Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js`
+Total Lines: 238
+Total Bytes: 9727
+Showing lines 35 to 160
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+35:         rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_INSTALL_DONE' }));
+36:       } else {
+37:         rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_INSTALL_ERROR', payload: res.error }));
+38:       }
+39:     }
+40:     
+41:     // PTY Handling (XTerm) - Singleton Shell with Scrollback & Auto-cd
+42:     else if (data.type === 'SHELL_PTY_START' || data.type === 'SHELL_PTY_ATTACH') {
+43:       const sid = data.sessionId || 'default';
+44:       activeSessionId = sid;
+45:       
+46:       let targetPath = '/root';
+47:       if (data.cwd && data.projectsRoot && data.cwd.startsWith(data.projectsRoot)) {
+48:           const relativeCwd = data.cwd.replace(data.projectsRoot, '').replace(/^\/+/, '');
+49:           targetPath = relativeCwd ? `/projects/${relativeCwd}` : '/projects';
+50:       } else if (data.cwd) {
+51:           targetPath = '/workspace';
+52:       }
+53: 
+54:       if (singletonPty) {
+55:          // Shell is already running! Send existing history to new view and switch directory
+56:          if (ptyScrollback) {
+57:             rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: ptyScrollback }));
+58:          }
+59:          if (singletonPty.stdin) {
+60:             singletonPty.stdin.write(`cd "${targetPath}" 2>/dev/null || cd /root; echo ""\n`);
+61:          }
+62:          return;
+63:       }
+64:       
+65:       const onProgress = (text) => {
+66:         ptyScrollback += text;
+67:         if (ptyScrollback.length > 20000) ptyScrollback = ptyScrollback.slice(-20000);
+68:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: text }));
+69:       };
+70:       
+71:       const res = await bootstrapLinux(onProgress);
+72:       if (!res.success) {
+73:          const errText = '\r\nLinux bootstrap failed.\r\n';
+74:          ptyScrollback += errText;
+75:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: errText }));
+76:          return;
+77:       }
+78: 
+79:       const banner = [
+80:         "\r\n  ___         ___ _            ",
+81:         " |   \\ -____ | __| |_  _ _  _  ",
+82:         " | |) / -_) V / _|| | || | \\/ /",
+83:         " |___/\\___|\\_/|_| |_|\\_,_/>  < ",
+84:         "                         /_/\\_\\",
+85:         "",
+86:         " Welcome to DevFlux Shell!",
+87:         " Type any Linux command to start.",
+88:         "\r\n"
+89:       ].join("\r\n");
+90:       ptyScrollback += banner;
+91:       rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: banner }));
+92: 
+93:       const appLibDir = process.env.APP_NATIVE_LIB_DIR;
+94:       if (!appLibDir) {
+95:         const errText = '\r\n[ERRO] APP_NATIVE_LIB_DIR não foi injetado pelo lado nativo. (Reinstale o APK!)\r\n';
+96:         ptyScrollback += errText;
+97:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: errText }));
+98:         return;
+99:       }
+100: 
+101:       let prootCmd = path.join(appLibDir, 'libproot.so');
+102:       let prootArgs = [
+103:         '--link2symlink',
+104:         '-0',
+105:         '-r', res.path,
+106:         '-b', '/dev', '-b', '/proc', '-b', '/sys'
+107:       ];
+108:       if (data.projectsRoot) {
+109:           prootArgs.push('-b', `${data.projectsRoot}:/projects`);
+110:       }
+111:       prootArgs.push('-w', targetPath);
+112:       prootArgs.push('/usr/bin/env', 'TERM=xterm-256color', '/bin/sh', '-i');
+113:       
+114:       let ptyWrapper = path.join(appLibDir, 'libpty-wrapper.so');
+115:       if (!fs.existsSync(ptyWrapper)) {
+116:         ptyWrapper = path.join(__dirname, 'libpty-wrapper.so');
+117:       }
+118:       const usePty = fs.existsSync(ptyWrapper);
+119:       let spawnCmd = usePty ? ptyWrapper : prootCmd;
+120:       let spawnArgs = usePty ? [prootCmd, ...prootArgs] : prootArgs;
+121: 
+122:       console.log(`[DevFlux] Executing singleton shell (PTY=${usePty}): ${spawnCmd} ${spawnArgs.join(' ')}`);
+123: 
+124:       const newPty = spawn(spawnCmd, spawnArgs, {
+125:         stdio: usePty ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+126:         env: { 
+127:           ...process.env, 
+128:           PTY_COLS: String(data.cols || 80),
+129:           PTY_ROWS: String(data.rows || 24),
+130:           PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:' + (process.env.PATH || ''),
+131:           PS1: `root # `,
+132:           TERM: 'xterm-256color', 
+133:           LD_LIBRARY_PATH: __dirname,
+134:           PROOT_NO_SECCOMP: '1',
+135:           PROOT_TMP_DIR: path.join(__dirname, 'tmp'), 
+136:           PROOT_LOADER: path.join(appLibDir, 'libproot-loader.so'),
+137:           PROOT_LOADER_32: path.join(appLibDir, 'libproot-loader32.so'),
+138:           CHOKIDAR_USEPOLLING: '1',
+139:           WATCHPACK_POLLING: 'true'
+140:         }
+141:       });
+142:       newPty.isRealPty = usePty;
+143:       singletonPty = newPty;
+144: 
+145:       newPty.stdout.on('data', d => {
+146:         const text = d.toString().replace(/(?<!\r)\n/g, '\r\n');
+147:         ptyScrollback += text;
+148:         if (ptyScrollback.length > 20000) ptyScrollback = ptyScrollback.slice(-20000);
+149:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: activeSessionId, payload: text }));
+150:       });
+151:       newPty.stderr.on('data', d => {
+152:         let str = d.toString();
+153:         if (str.includes("can't access tty; job control turned off")) return;
+154:         const text = str.replace(/(?<!\r)\n/g, '\r\n');
+155:         ptyScrollback += text;
+156:         if (ptyScrollback.length > 20000) ptyScrollback = ptyScrollback.slice(-20000);
+157:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: activeSessionId, payload: text }));
+158:       });
+159:       
+160:       newPty.on('error', err => {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

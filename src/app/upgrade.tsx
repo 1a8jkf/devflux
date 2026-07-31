@@ -5,25 +5,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { useSubscription } from '../contexts/SubscriptionContext';
+import { useRevenueCat } from '../contexts/RevenueCatContext';
 
 export default function UpgradeScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isPro, unlockPro, resetPro } = useSubscription();
+  const { isPro, presentPaywall, presentCustomerCenter } = useRevenueCat();
 
   const handlePurchase = async () => {
     if (isPro) return;
-    await unlockPro();
-    alert('CodeFlex PRO desbloqueado com sucesso!');
-    router.back();
+    await presentPaywall();
   };
 
-  const handleReset = async () => {
-    await resetPro();
-    alert('Resetado para Free (Para testes).');
+  const handleManage = async () => {
+    await presentCustomerCenter();
   };
 
   return (
@@ -70,25 +67,19 @@ export default function UpgradeScreen() {
         </View>
 
         <View style={styles.pricing}>
-          <Text style={styles.priceLabel}>ACESSO VITALÍCIO</Text>
-          <Text style={styles.priceValue}>R$ 24,90</Text>
-          <Text style={styles.priceSub}>Pagamento único. Sem assinaturas.</Text>
+          <Text style={styles.priceLabel}>ASSINATURA</Text>
+          <Text style={styles.priceSub}>Planos Mensal, Anual ou Vitalício disponíveis.</Text>
         </View>
 
         <TouchableOpacity 
           style={[styles.buyBtn, isPro && { backgroundColor: theme.colors.success }]} 
-          onPress={handlePurchase}
-          disabled={isPro}
+          onPress={isPro ? handleManage : handlePurchase}
         >
-          <Text style={styles.buyBtnText}>{isPro ? 'VOCÊ JÁ É PRO' : 'DESBLOQUEAR AGORA'}</Text>
+          <Text style={styles.buyBtnText}>{isPro ? 'GERENCIAR ASSINATURA' : 'VER PLANOS'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
           <Text style={styles.closeBtnText}>Talvez mais tarde</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={{ marginTop: 20, alignItems: 'center' }} onPress={handleReset}>
-          <Text style={{ color: theme.colors.textSecondary, fontFamily: theme.typography.mono, fontSize: 10 }}>[DEV] Resetar Assinatura</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>

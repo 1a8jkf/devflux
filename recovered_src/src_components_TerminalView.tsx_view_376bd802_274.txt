@@ -1,0 +1,59 @@
+Created At: 2026-07-27T16:01:29Z
+Completed At: 2026-07-27T16:01:29Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx`
+Total Lines: 329
+Total Bytes: 12084
+Showing lines 150 to 200
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+150:   const lastSizeRef = useRef({ cols: 80, rows: 24 });
+151:   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+152: 
+153:   const startPtySession = (cols = 80, rows = 24) => {
+154:     if (!isReadyRef.current) return;
+155: 
+156:     NodeRunner.init().then(() => {
+157:       const cleanRoot = PROJECTS_ROOT.replace('file://', '').replace(/\/+$/, '');
+158:       const cleanProject = projectId ? projectId.replace(/^\/+/, '').replace(/\/+$/, '') : '';
+159:       const targetCwd = cleanProject ? `${cleanRoot}/${cleanProject}` : cleanRoot;
+160:       NodeRunner.send({ 
+161:         type: 'SHELL_PTY_START', 
+162:         cwd: targetCwd, 
+163:         projectsRoot: cleanRoot, 
+164:         projectName: cleanProject || 'DevFlux', 
+165:         sessionId: sessionId,
+166:         cols: cols,
+167:         rows: rows
+168:       });
+169:     });
+170:   };
+171: 
+172:   useEffect(() => {
+173:     if (isReadyRef.current) {
+174:       webviewRef.current?.injectJavaScript(`if (window.term) { window.term.clear(); window.term.reset(); } true;`);
+175:       startPtySession(lastSizeRef.current.cols, lastSizeRef.current.rows);
+176:     }
+177:   }, [sessionId, projectId]);
+178: 
+179:   useEffect(() => {
+180:     (global as any).activeInputTarget = sessionId;
+181:     DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+182:     const unsubscribe = NodeRunner.addListener((msg) => {
+183:       if ((msg.type === 'CMD_OUT' || msg.type === 'CMD_ERR') && msg.sessionId === sessionId) {
+184:         const safePayload = JSON.stringify(msg.payload);
+185:         const js = `window.postMessage(JSON.stringify({ type: 'WRITE', payload: ${safePayload} }), '*'); true;`;
+186:         webviewRef.current?.injectJavaScript(js);
+187:       }
+188:     });
+189: 
+190:     const toolbarSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION', (action) => {
+191:       const currentTarget = (global as any).activeInputTarget;
+192:       if (currentTarget && currentTarget !== sessionId && currentTarget !== 'terminal-' + sessionId && !String(currentTarget).startsWith('terminal')) {
+193:         return;
+194:       }
+195:       if (action.actionType === 'keypress') {
+196:         const { key, ctrlKey } = action.meta;
+197:         let charToSend = '';
+198:         if (ctrlKey) {
+199:           if (key.length === 1 && key >= 'a' && key <= 'z') {
+200:             charToSend = String.fromCharCode(key.charCodeAt(0) - 96);
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

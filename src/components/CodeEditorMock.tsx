@@ -18,25 +18,25 @@ export const CodeEditorMock: React.FC<CodeEditorMockProps> = ({ code, language, 
 
   const highlightCode = (text: string) => {
     if (!text) return null;
-    const tokenRegex = /(['"`].*?['"`]|\b(?:const|let|var|function|return|import|export|from|default|class|interface|type|if|else|for|while|await|async)\b|\b\d+\b|\b(?:true|false|null|undefined)\b|\w+|[^\w\s]+|\s+)/g;
+    const tokenRegex = /(['"`].*?['"`]|\b(?:const|let|var|function|return|import|export|from|default|class|interface|type|if|else|for|while|await|async)\b|\b\d+\b|\b(?:true|false|null|undefined)\b|\b(?:document|window|console|Math|Object|Array|String)\b|\w+|[^\w\s]+|\s+)/g;
     const tokens = text.match(tokenRegex) || [];
     
     return tokens.map((token, i) => {
-      let color = theme.colors.textPrimary;
+      let color = '#d4d4d4'; // Default text color
       if (/^['"`]/.test(token)) {
-        color = theme.colors.success; // Strings (Green)
+        color = '#ce9178'; // Strings (Orange/Brown)
       } else if (/^(const|let|var|function|return|import|export|from|default|class|interface|type|if|else|for|while|await|async)$/.test(token)) {
-        color = theme.colors.accentPurple; // Keywords (Purple)
+        color = '#c586c0'; // Keywords (Purple)
       } else if (/^\d+$/.test(token)) {
-        color = theme.colors.accentAmber; // Numbers (Orange)
+        color = '#b5cea8'; // Numbers (Green)
       } else if (/^(true|false|null|undefined)$/.test(token)) {
-        color = theme.colors.accentBlue; // Booleans (Blue)
-      } else if (/^[A-Z][a-zA-Z0-9]*$/.test(token) && token.length > 1) {
-        color = theme.colors.accentTeal; // Classes/Components (Teal)
+        color = '#569cd6'; // Booleans (Blue)
+      } else if (/^(document|window|console|Math|Object|Array|String)$/.test(token)) {
+        color = '#4EC9B0'; // Native classes (Teal)
       } else if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(token)) {
-        color = '#9CDCFE'; // Light Blue for variables (VS Code style)
+        color = '#9cdcfe'; // Variables (Light Blue)
       } else if (/^[^\w\s]+$/.test(token)) {
-        color = theme.colors.textSecondary; // Operators and brackets (Gray)
+        color = '#d4d4d4'; // Operators (Gray)
       }
 
       return <Text key={i} style={{ color }}>{token}</Text>;
@@ -48,14 +48,6 @@ export const CodeEditorMock: React.FC<CodeEditorMockProps> = ({ code, language, 
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.shortcutBar}>
-        {['{', '}', '(', ')', ';', '<', '>', 'Tab'].map((key) => (
-          <View key={key} style={styles.shortcutKey}>
-            <Text style={styles.shortcutText}>{key}</Text>
-          </View>
-        ))}
-      </View>
-
       <ScrollView style={styles.editorArea} horizontal>
         <ScrollView style={styles.editorArea}>
           <View style={styles.content}>
@@ -150,18 +142,28 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     right: 0,
     bottom: 0,
     padding: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    margin: 0,
   },
   highlightText: {
     fontFamily: theme.typography.mono,
     fontSize: 14,
     lineHeight: 22,
+    fontWeight: '400',
+    letterSpacing: 0,
   },
   input: {
     flex: 1,
-    color: 'transparent', // Make text transparent so highlight layer shows through
+    color: 'transparent',
     fontFamily: theme.typography.mono,
     fontSize: 14,
     lineHeight: 22,
+    fontWeight: '400',
+    letterSpacing: 0,
     padding: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    margin: 0,
   },
 });

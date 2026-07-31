@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { TerminalView } from '../../components/TerminalView';
@@ -9,6 +10,8 @@ import { NodeRunner } from '../../utils/nodeRunner';
 export default function TerminalScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const params = useLocalSearchParams();
+  const projectId = params.projectId as string;
 
   React.useEffect(() => {
     NodeRunner.init().catch(console.error);
@@ -17,14 +20,15 @@ export default function TerminalScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Terminal</Text>
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.actionBtn}>
-            <Icon name="Trash2" size={16} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Icon name="Terminal" size={18} color={theme.colors.accentBlue} />
+          <Text style={styles.title}>Terminal do Projeto</Text>
         </View>
+        <Text style={{ fontFamily: theme.typography.mono, fontSize: 12, color: theme.colors.textSecondary }}>
+          /projects/{projectId || 'workspace'}
+        </Text>
       </View>
-      <TerminalView />
+      <TerminalView projectId={projectId} sessionId={`editor-tab-${projectId || 'global'}`} />
     </View>
   );
 }

@@ -1,0 +1,69 @@
+Created At: 2026-07-27T12:14:24Z
+Completed At: 2026-07-27T12:14:24Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js`
+Total Lines: 244
+Total Bytes: 10265
+Showing lines 35 to 95
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+35:         rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_INSTALL_ERROR', payload: res.error }));
+36:       }
+37:     }
+38:     
+39:     // PTY Handling (XTerm) - Multi-Session Support with dedicated scrollback per terminal
+40:     else if (data.type === 'SHELL_PTY_START' || data.type === 'SHELL_PTY_ATTACH') {
+41:       const sid = data.sessionId || 'default';
+42:       
+43:       let targetPath = '/root';
+44:       if (data.cwd && data.projectsRoot && data.cwd.startsWith(data.projectsRoot)) {
+45:           const relativeCwd = data.cwd.replace(data.projectsRoot, '').replace(/^\/+/, '');
+46:           targetPath = relativeCwd ? `/projects/${relativeCwd}` : '/projects';
+47:       } else if (data.cwd) {
+48:           targetPath = '/workspace';
+49:       }
+50: 
+51:       // If this exact terminal session is already running, just restore its scrollback buffer
+52:       let session = sessions.get(sid);
+53:       if (session && session.pty) {
+54:          if (session.scrollback) {
+55:             rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: session.scrollback }));
+56:          }
+57:          return;
+58:       }
+59:       
+60:       const onProgress = (text) => {
+61:         if (session) session.scrollback += text;
+62:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: text }));
+63:       };
+64:       
+65:       const res = await bootstrapLinux(onProgress);
+66:       if (!res.success) {
+67:          const errText = '\r\nLinux bootstrap failed.\r\n';
+68:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: errText }));
+69:          return;
+70:       }
+71: 
+72:       const banner = [
+73:         "\r\n  ___         ___ _            ",
+74:         " |   \\ -____ | __| |_  _ _  _  ",
+75:         " | |) / -_) V / _|| | || | \\/ /",
+76:         " |___/\\___|\\_/|_| |_|\\_,_/>  < ",
+77:         "                         /_/\\_\\",
+78:         "",
+79:         " Welcome to DevFlux Shell!",
+80:         " Type any Linux command to start.",
+81:         "\r\n"
+82:       ].join("\r\n");
+83:       
+84:       // Memory cleanup: limit to max 3 simultaneous shell sessions to conserve Android RAM
+85:       if (sessions.size >= 3) {
+86:          for (const [key, oldSess] of sessions.entries()) {
+87:             if (key !== sid && key !== 'global-1' && !key.startsWith('global')) {
+88:                try { if (oldSess.pty) oldSess.pty.kill('SIGKILL'); } catch(e) {}
+89:                sessions.delete(key);
+90:                break;
+91:             }
+92:          }
+93:       }
+94: 
+95:       session = { id: sid, pty: null, scrollback: banner, cwd: targetPath };
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

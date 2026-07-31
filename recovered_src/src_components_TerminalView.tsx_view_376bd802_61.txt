@@ -1,0 +1,108 @@
+Created At: 2026-07-27T14:10:54Z
+Completed At: 2026-07-27T14:10:54Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx`
+Total Lines: 305
+Total Bytes: 11188
+Showing lines 1 to 100
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: import React, { useRef, useEffect, useState } from 'react';
+2: import { View, StyleSheet, Text, DeviceEventEmitter } from 'react-native';
+3: import { WebView } from 'react-native-webview';
+4: import { NodeRunner } from '../utils/nodeRunner';
+5: import { PROJECTS_ROOT } from '../services/FileSystemService';
+6: 
+7: const HTML_CONTENT = `
+8: <!DOCTYPE html>
+9: <html>
+10:   <head>
+11:     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+12:     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+13:     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+14:     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+15:     <style>
+16:       body, html { margin: 0; padding: 0; height: 100%; width: 100%; background-color: #000; overflow: hidden; }
+17:       #terminal-container { height: 100%; width: 100%; padding: 6px; box-sizing: border-box; }
+18:       #error-log { color: red; font-family: monospace; position: absolute; top: 0; left: 0; z-index: 9999; pointer-events: none; }
+19:     </style>
+20:   </head>
+21:   <body>
+22:     <div id="error-log"></div>
+23:     <div id="terminal-container"></div>
+24:     <script>
+25:       let term;
+26:       
+27:       window.onerror = function(message, source, lineno, colno, error) {
+28:          document.getElementById('error-log').innerText += "\\n" + message;
+29:          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'JS_ERROR', payload: message }));
+30:       };
+31: 
+32:       const sendMessage = (msg) => {
+33:         window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+34:       };
+35: 
+36:       // We must wait for Xterm to load from CDN
+37:       const init = () => {
+38:         if (typeof Terminal === 'undefined') {
+39:            setTimeout(init, 100);
+40:            return;
+41:         }
+42: 
+43:         term = new Terminal({
+44:           theme: { background: '#000000' },
+45:           fontFamily: 'monospace',
+46:           fontSize: 13,
+47:           cursorBlink: true,
+48:           convertEol: true,
+49:           wordWrap: true,
+50:           scrollback: 1000
+51:         });
+52:         
+53:         const fitAddon = new FitAddon.FitAddon();
+54:         window.fitAddon = fitAddon;
+55:         window.term = term;
+56:         term.loadAddon(fitAddon);
+57:         term.open(document.getElementById('terminal-container'));
+58:         
+59:         term.onResize(size => {
+60:           sendMessage({ type: 'RESIZE', cols: size.cols, rows: size.rows });
+61:         });
+62: 
+63:         setTimeout(() => {
+64:           fitAddon.fit();
+65:           sendMessage({ type: 'READY', cols: term.cols, rows: term.rows });
+66:         }, 150);
+67: 
+68:         window.addEventListener('resize', () => {
+69:           if (window.fitAddon) { window.fitAddon.fit(); }
+70:         });
+71: 
+72:         // Disable standard autocorrect on terminal textareas
+73:         setTimeout(() => {
+74:           const textareas = document.querySelectorAll('textarea');
+75:           textareas.forEach(ta => {
+76:             ta.setAttribute('autocorrect', 'off');
+77:             ta.setAttribute('autocapitalize', 'none');
+78:             ta.setAttribute('spellcheck', 'false');
+79:             ta.setAttribute('autocomplete', 'off');
+80:           });
+81:         }, 500);
+82: 
+83:         term.onData(data => {
+84:           sendMessage({ type: 'DATA', payload: data });
+85:         });
+86:       };
+87: 
+88:       const focusTerminalTextarea = () => {
+89:         if (window.term) { window.term.focus(); }
+90:         const ta = document.querySelector('.xterm-helper-textarea') || document.querySelector('textarea');
+91:         if (ta && document.activeElement !== ta) {
+92:           ta.focus();
+93:           ta.click();
+94:         }
+95:       };
+96: 
+97:       window.addEventListener('focus', () => { focusTerminalTextarea(); sendMessage({ type: 'FOCUS' }); }, true);
+98:       document.addEventListener('click', () => { focusTerminalTextarea(); sendMessage({ type: 'FOCUS' }); }, true);
+99:       document.addEventListener('touchstart', () => { focusTerminalTextarea(); sendMessage({ type: 'FOCUS' }); }, true);
+100: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

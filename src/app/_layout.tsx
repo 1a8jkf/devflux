@@ -16,6 +16,10 @@ import { SubscriptionProvider } from '../contexts/SubscriptionContext';
 import { AISettingsProvider } from '../contexts/AISettingsContext';
 import { AIProvider } from '../contexts/AIContext';
 import { CommandPalette } from '../components/CommandPalette';
+import { KeyboardToolbar } from '../components/KeyboardToolbar';
+import { LanguageProvider, useLanguage } from '../contexts/LanguageContext';
+import { RevenueCatProvider } from '../contexts/RevenueCatContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MOCK_FILES = [
   {
@@ -48,6 +52,8 @@ function CustomDrawerContent(props: any) {
   const styles = getStyles(theme);
   const router = useRouter();
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
   
   const [showGithubModal, setShowGithubModal] = React.useState(false);
   const [githubTokenInput, setGithubTokenInput] = React.useState('');
@@ -116,7 +122,7 @@ function CustomDrawerContent(props: any) {
         />
       ) : (
         <>
-          <TouchableOpacity style={styles.drawerUserSection} onPress={() => {
+          <TouchableOpacity style={[styles.drawerUserSection, { paddingTop: insets.top + 16 }]} onPress={() => {
         if (!githubUser) setShowGithubModal(true);
       }}>
         {githubUser ? (
@@ -202,6 +208,7 @@ function InnerLayout() {
   const params = useGlobalSearchParams();
   const { openPalette } = useCommandPalette();
   const { theme } = useAppTheme();
+  const { t } = useLanguage();
   
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.bgPrimary }}>
@@ -209,8 +216,10 @@ function InnerLayout() {
       <CommandPalette />
       <Drawer
         drawerContent={(props) => <CustomDrawerContent {...props} />}
-        screenOptions={({ navigation }) => ({
-          headerShown: pathname !== '/editor/codigo' && !pathname.startsWith('/database'),
+        screenOptions={({ navigation }) => {
+          const hideHeaderPaths = ['/editor/codigo', '/novo-projeto', '/bridge', '/editor/configuracoes', '/onboarding'];
+          return {
+          headerShown: !hideHeaderPaths.includes(pathname) && !pathname.startsWith('/database'),
           headerStyle: {
             backgroundColor: theme.colors.bgElevated,
             borderBottomWidth: 0,
@@ -238,13 +247,7 @@ function InnerLayout() {
             if (canGoBack && !isRoot) {
               return (
                 <TouchableOpacity 
-                  onPress={() => {
-                    if ((pathname === '/ai-panel' || pathname === '/editor/configuracoes') && params.projectId) {
-                      router.navigate({ pathname: '/editor/codigo', params: { projectId: params.projectId as string } });
-                    } else {
-                      router.back();
-                    }
-                  }} 
+                  onPress={() => router.back()} 
                   style={{ marginLeft: 16 }}
                 >
                   <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
@@ -264,10 +267,9 @@ function InnerLayout() {
           },
           headerTitleAlign: 'left',
           headerTitle: () => {
-            const { variant } = useAppTheme();
             return (
               <Image 
-                source={variant === 'dark' ? require('../../assets/icon-black-theme.png') : require('../../assets/icon-white-theme.png')} 
+                source={require('../../assets/top-bar-icon.png')} 
                 style={{ width: 36, height: 36, resizeMode: 'contain', marginLeft: 4 }} 
               />
             );
@@ -284,25 +286,31 @@ function InnerLayout() {
           sceneStyle: {
             backgroundColor: theme.colors.bgPrimary,
           }
-        })}
+        };
+        }}
       >
-        <Drawer.Screen name="index" options={{ title: 'CodeFlex', headerShown: true }} />
-        <Drawer.Screen name="github/repos" options={{ title: 'Repositórios', headerShown: true }} />
-        <Drawer.Screen name="github/prs" options={{ title: 'Pull Requests', headerShown: true }} />
-        <Drawer.Screen name="github/issues" options={{ title: 'Issues', headerShown: true }} />
-        <Drawer.Screen name="github/gists" options={{ title: 'Meus Gists', headerShown: true }} />
-        <Drawer.Screen name="github/starred" options={{ title: 'Favoritos', headerShown: true }} />
-        <Drawer.Screen name="projetos" options={{ title: 'Projetos', headerShown: true }} />
-        <Drawer.Screen name="editor" options={{ title: 'Editor', headerShown: true }} />
-        <Drawer.Screen name="ai-panel" options={{ title: 'Assistente (BYOK)', headerShown: true }} />
-        <Drawer.Screen name="ai-settings" options={{ title: 'Provedores de IA', headerShown: true }} />
-        <Drawer.Screen name="bridge" options={{ title: 'CodeFlex Bridge', headerShown: true }} />
-        <Drawer.Screen name="upgrade" options={{ title: 'CodeFlex Pro', headerShown: true }} />
-        <Drawer.Screen name="ajuda" options={{ title: 'Ajuda', headerShown: true }} />
-        <Drawer.Screen name="sobre" options={{ title: 'Sobre', headerShown: true }} />
-        <Drawer.Screen name="suporte" options={{ title: 'Suporte', headerShown: true }} />
-        <Drawer.Screen name="documentacao" options={{ title: 'Documentação', headerShown: true }} />
+        <Drawer.Screen name="index" options={{ title: t('drawer.titles.home', 'CodeFlex'), headerShown: true }} />
+        <Drawer.Screen name="github/repos" options={{ title: t('drawer.titles.repos', 'Repositórios'), headerShown: true }} />
+        <Drawer.Screen name="github/prs" options={{ title: t('drawer.titles.prs', 'Pull Requests'), headerShown: true }} />
+        <Drawer.Screen name="github/issues" options={{ title: t('drawer.titles.issues', 'Issues'), headerShown: true }} />
+        <Drawer.Screen name="github/gists" options={{ title: t('drawer.titles.gists', 'Meus Gists'), headerShown: true }} />
+        <Drawer.Screen name="github/starred" options={{ title: t('drawer.titles.starred', 'Favoritos'), headerShown: true }} />
+        <Drawer.Screen name="projetos" options={{ title: t('drawer.titles.projects', 'Projetos'), headerShown: true }} />
+        <Drawer.Screen name="editor" options={{ title: t('drawer.titles.editor', 'Editor'), headerShown: true }} />
+        <Drawer.Screen name="ai-panel" options={{ title: t('drawer.titles.aiPanel', 'Assistente (BYOK)'), headerShown: true }} />
+        <Drawer.Screen name="ai-settings" options={{ title: t('drawer.titles.aiSettings', 'Provedores de IA'), headerShown: true }} />
+        <Drawer.Screen name="bridge" options={{ title: t('drawer.titles.bridge', 'CodeFlex Bridge'), headerShown: true }} />
+        <Drawer.Screen name="upgrade" options={{ title: t('drawer.titles.upgrade', 'CodeFlex Pro'), headerShown: true }} />
+        <Drawer.Screen name="ajuda" options={{ title: t('drawer.titles.help', 'Ajuda'), headerShown: true }} />
+        <Drawer.Screen name="sobre" options={{ title: t('drawer.titles.about', 'Sobre'), headerShown: true }} />
+        <Drawer.Screen name="suporte" options={{ title: t('drawer.titles.support', 'Suporte'), headerShown: true }} />
+        <Drawer.Screen name="documentacao" options={{ title: t('drawer.titles.docs', 'Documentação'), headerShown: true }} />
+        <Drawer.Screen name="shell" options={{ title: 'Terminal Linux', headerShown: false }} />
+        <Drawer.Screen name="onboarding" options={{ title: 'Onboarding', headerShown: false }} />
       </Drawer>
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 999 }} pointerEvents="box-none">
+        <KeyboardToolbar />
+      </View>
     </GestureHandlerRootView>
   );
 }
@@ -312,19 +320,23 @@ export { ErrorBoundary } from 'expo-router';
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <SettingsProvider>
-        <SubscriptionProvider>
-          <AISettingsProvider>
-            <AIProvider>
-              <CommandPaletteProvider>
-                <InnerLayout />
-              </CommandPaletteProvider>
-            </AIProvider>
-          </AISettingsProvider>
-        </SubscriptionProvider>
-      </SettingsProvider>
-    </ThemeProvider>
+    <RevenueCatProvider>
+      <ThemeProvider>
+        <LanguageProvider>
+          <SettingsProvider>
+            <SubscriptionProvider>
+              <AISettingsProvider>
+                <AIProvider>
+                  <CommandPaletteProvider>
+                    <InnerLayout />
+                  </CommandPaletteProvider>
+                </AIProvider>
+              </AISettingsProvider>
+            </SubscriptionProvider>
+          </SettingsProvider>
+        </LanguageProvider>
+      </ThemeProvider>
+    </RevenueCatProvider>
   );
 }
 
@@ -357,7 +369,6 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 56, // safe area mock
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border,
     backgroundColor: theme.colors.bgPrimary,

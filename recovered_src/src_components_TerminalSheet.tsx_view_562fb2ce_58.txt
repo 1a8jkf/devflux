@@ -1,0 +1,195 @@
+Created At: 2026-07-27T00:39:57Z
+Completed At: 2026-07-27T00:39:57Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalSheet.tsx`
+Total Lines: 187
+Total Bytes: 6529
+Showing lines 1 to 187
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: import React, { forwardRef, useImperativeHandle, useRef } from 'react';
+2: import { View, StyleSheet, TouchableOpacity } from 'react-native';
+3: import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
+4: import { useAppTheme } from '../contexts/ThemeContext';
+5: import { AppTheme } from '../theme';
+6: import { useSafeAreaInsets } from 'react-native-safe-area-context';
+7: import { Icon } from './Icon';
+8: import { TerminalView } from './TerminalView';
+9: import { NodeRunner } from '../utils/nodeRunner';
+10: import { Text } from 'react-native';
+11: 
+12: export interface TerminalSheetRef {
+13:   expand: () => void;
+14:   collapse: () => void;
+15:   log: (text: string, type?: string) => void;
+16: }
+17: 
+18: interface TerminalSheetProps {
+19:   projectId: string;
+20:   githubRepo?: string;
+21:   onStartDevServer?: () => void;
+22:   onFileSystemChange?: () => void;
+23: }
+24: 
+25: export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId }, ref) => {
+26:   const { theme } = useAppTheme();
+27:   const styles = getStyles(theme);
+28:   const insets = useSafeAreaInsets();
+29:   const bottomSheetRef = useRef<BottomSheet>(null);
+30:   
+31:   const [activeTab, setActiveTab] = React.useState<'terminal' | 'monitor'>('terminal');
+32:   const [sysStats, setSysStats] = React.useState<any>(null);
+33: 
+34:   React.useEffect(() => {
+35:     let interval: any;
+36:     if (activeTab === 'monitor') {
+37:       interval = setInterval(() => {
+38:         NodeRunner.send({ type: 'GET_SYS_STATS' });
+39:       }, 2000);
+40:     }
+41:     return () => clearInterval(interval);
+42:   }, [activeTab]);
+43: 
+44:   React.useEffect(() => {
+45:     const unsubscribe = NodeRunner.addListener((msg) => {
+46:       if (msg.type === 'SYS_STATS_RES') {
+47:          setSysStats(msg.payload);
+48:       }
+49:     });
+50:     return () => unsubscribe();
+51:   }, []);
+52: 
+53:   useImperativeHandle(ref, () => ({
+54:     expand: () => bottomSheetRef.current?.expand(),
+55:     collapse: () => bottomSheetRef.current?.collapse(),
+56:     log: () => {}, // Deprecated with TerminalView
+57:   }));
+58: 
+59:   return (
+60:     <BottomSheet
+61:       ref={bottomSheetRef}
+62:       index={0}
+63:       snapPoints={[24, '50%', '90%']}
+64:       backgroundStyle={styles.background}
+65:       handleIndicatorStyle={styles.indicator}
+66:       bottomInset={insets.bottom}
+67:       enableContentPanningGesture={false}
+68:       keyboardBehavior="interactive"
+69:       keyboardBlurBehavior="restore"
+70:     >
+71:       <BottomSheetView style={styles.contentContainer}>
+72:         <View style={styles.header}>
+73:           <TouchableOpacity onPress={() => bottomSheetRef.current?.collapse()} style={styles.collapseBtn}>
+74:              <Icon name="ChevronDown" size={20} color={theme.colors.textSecondary} />
+75:           </TouchableOpacity>
+76:         </View>
+77:         
+78:         <View style={styles.tabBar}>
+79:           <TouchableOpacity style={[styles.tab, activeTab === 'terminal' && styles.activeTab]} onPress={() => setActiveTab('terminal')}>
+80:             <Text style={[styles.tabText, activeTab === 'terminal' && styles.activeTabText]}>Alpine Linux Console</Text>
+81:           </TouchableOpacity>
+82:           <TouchableOpacity style={[styles.tab, activeTab === 'monitor' && styles.activeTab]} onPress={() => setActiveTab('monitor')}>
+83:             <Text style={[styles.tabText, activeTab === 'monitor' && styles.activeTabText]}>System Monitor</Text>
+84:           </TouchableOpacity>
+85:         </View>
+86: 
+87:         <View style={{ flex: 1 }}>
+88:            {activeTab === 'terminal' ? (
+89:              <TerminalView projectId={projectId} sessionId="editor" />
+90:            ) : (
+91:              <View style={{ flex: 1, backgroundColor: '#000', padding: 16 }}>
+92:                <Text style={{ color: theme.colors.accentTeal, fontFamily: 'monospace', fontSize: 16, marginBottom: 16 }}>
+93:                  {'== DEVFLUX SYSTEM STATE =='}
+94:                </Text>
+95:                {sysStats ? (
+96:                  <View>
+97:                    <Text style={{ color: '#ccc', fontFamily: 'monospace', marginBottom: 8 }}>
+98:                      OS: {sysStats.platform} {sysStats.release} ({sysStats.arch})
+99:                    </Text>
+100:                    <Text style={{ color: '#ccc', fontFamily: 'monospace', marginBottom: 8 }}>
+101:                      CPU: {sysStats.cpus} cores
+102:                    </Text>
+103:                    <Text style={{ color: '#ccc', fontFamily: 'monospace', marginBottom: 8 }}>
+104:                      RAM: {Math.round(sysStats.freemem / 1024 / 1024)} MB / {Math.round(sysStats.totalmem / 1024 / 1024)} MB Livre
+105:                    </Text>
+106:                    <Text style={{ color: '#ccc', fontFamily: 'monospace', marginBottom: 8 }}>
+107:                      Uptime: {Math.round(sysStats.uptime / 60)} minutos
+108:                    </Text>
+109:                    
+110:                    <View style={{ marginTop: 20 }}>
+111:                      <Text style={{ color: theme.colors.textSecondary, fontFamily: 'monospace', fontSize: 12 }}>
+112:                        [Node.js Runtime rodando no núcleo nativo Android via PRoot]
+113:                      </Text>
+114:                    </View>
+115:                  </View>
+116:                ) : (
+117:                  <Text style={{ color: '#888', fontFamily: 'monospace' }}>Coletando dados do sistema...</Text>
+118:                )}
+119:              </View>
+120:            )}
+121:         </View>
+122:       </BottomSheetView>
+123:     </BottomSheet>
+124:   );
+125: });
+126: 
+127: const getStyles = (theme: AppTheme) => StyleSheet.create({
+128:   background: {
+129:     backgroundColor: theme.colors.bgElevated,
+130:     borderTopLeftRadius: 16,
+131:     borderTopRightRadius: 16,
+132:     borderWidth: 1,
+133:     borderColor: theme.colors.border,
+134:   },
+135:   indicator: {
+136:     backgroundColor: theme.colors.border,
+137:     width: 40,
+138:   },
+139:   contentContainer: {
+140:     flex: 1,
+141:   },
+142:   header: {
+143:     position: 'absolute',
+144:     right: 16,
+145:     top: -20, // Align with indicator or just above TerminalView tab
+146:     zIndex: 10,
+147:     elevation: 10,
+148:   },
+149:   collapseBtn: {
+150:     padding: 8,
+151:     backgroundColor: theme.colors.bgElevated,
+152:     borderRadius: 20,
+153:     borderWidth: 1,
+154:     borderColor: theme.colors.border,
+155:   },
+156:   tabBar: {
+157:     flexDirection: 'row',
+158:     alignItems: 'center',
+159:     backgroundColor: theme.colors.bgElevated,
+160:     borderBottomWidth: 1,
+161:     borderBottomColor: theme.colors.border,
+162:   },
+163:   tab: {
+164:     flexDirection: 'row',
+165:     alignItems: 'center',
+166:     paddingHorizontal: 12,
+167:     paddingVertical: 8,
+168:     borderRightWidth: 1,
+169:     borderRightColor: theme.colors.border,
+170:   },
+171:   activeTab: {
+172:     backgroundColor: theme.colors.bgSurface,
+173:     borderBottomWidth: 1,
+174:     borderBottomColor: theme.colors.accentBlue,
+175:   },
+176:   tabText: {
+177:     fontFamily: theme.typography.mono,
+178:     fontSize: 12,
+179:     color: theme.colors.textSecondary,
+180:     marginRight: 8,
+181:   },
+182:   activeTabText: {
+183:     color: theme.colors.textPrimary,
+184:   }
+185: });
+186: 
+187: 
+The above content shows the entire, complete file contents of the requested file.

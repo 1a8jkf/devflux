@@ -1,0 +1,159 @@
+Created At: 2026-07-27T01:37:02Z
+Completed At: 2026-07-27T01:37:02Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx`
+Total Lines: 251
+Total Bytes: 9084
+Showing lines 50 to 200
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+50:           scrollback: 1000
+51:         });
+52:         
+53:         const fitAddon = new FitAddon.FitAddon();
+54:         term.loadAddon(fitAddon);
+55:         term.open(document.getElementById('terminal-container'));
+56:         
+57:         term.onResize(size => {
+58:           sendMessage({ type: 'RESIZE', cols: size.cols, rows: size.rows });
+59:         });
+60: 
+61:         setTimeout(() => {
+62:           fitAddon.fit();
+63:           sendMessage({ type: 'READY', cols: term.cols, rows: term.rows });
+64:         }, 150);
+65: 
+66:         window.addEventListener('resize', () => {
+67:           fitAddon.fit();
+68:         });
+69: 
+70:         // Disable standard autocorrect on terminal textareas
+71:         setTimeout(() => {
+72:           const textareas = document.querySelectorAll('textarea');
+73:           textareas.forEach(ta => {
+74:             ta.setAttribute('autocorrect', 'off');
+75:             ta.setAttribute('autocapitalize', 'none');
+76:             ta.setAttribute('spellcheck', 'false');
+77:             ta.setAttribute('autocomplete', 'off');
+78:           });
+79:         }, 500);
+80: 
+81:         term.onData(data => {
+82:           sendMessage({ type: 'DATA', payload: data });
+83:         });
+84:       };
+85: 
+86:       window.addEventListener('focus', () => sendMessage({ type: 'FOCUS' }), true);
+87:       document.addEventListener('click', () => sendMessage({ type: 'FOCUS' }), true);
+88:       document.addEventListener('touchstart', () => sendMessage({ type: 'FOCUS' }), true);
+89: 
+90:       window.addEventListener('message', event => {
+91:          try {
+92:             const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+93:             if (msg.type === 'WRITE' && term) {
+94:                term.write(msg.payload);
+95:             }
+96:          } catch(e) {}
+97:       });
+98: 
+99:       window.onload = init;
+100:     </script>
+101:   </body>
+102: </html>
+103: `;
+104: 
+105: interface TerminalViewProps {
+106:   projectId?: string;
+107:   sessionId?: string;
+108: }
+109: 
+110: export const TerminalView = ({ projectId, sessionId = 'global-1' }: TerminalViewProps) => {
+111:   const webviewRef = useRef<WebView>(null);
+112:   const isStarted = useRef(false);
+113:   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+114: 
+115:   useEffect(() => {
+116:     (global as any).activeInputTarget = sessionId;
+117:     DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+118:     const unsubscribe = NodeRunner.addListener((msg) => {
+119:       if ((msg.type === 'CMD_OUT' || msg.type === 'CMD_ERR') && msg.sessionId === sessionId) {
+120:         const safePayload = JSON.stringify(msg.payload);
+121:         const js = `window.postMessage(JSON.stringify({ type: 'WRITE', payload: ${safePayload} }), '*'); true;`;
+122:         webviewRef.current?.injectJavaScript(js);
+123:       }
+124:     });
+125: 
+126:     const toolbarSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION', (action) => {
+127:       const currentTarget = (global as any).activeInputTarget;
+128:       if (currentTarget && currentTarget !== sessionId && currentTarget !== 'terminal-' + sessionId && !String(currentTarget).startsWith('terminal')) {
+129:         return;
+130:       }
+131:       if (action.actionType === 'keypress') {
+132:         const { key, ctrlKey } = action.meta;
+133:         let charToSend = '';
+134:         if (ctrlKey) {
+135:           if (key.length === 1 && key >= 'a' && key <= 'z') {
+136:             charToSend = String.fromCharCode(key.charCodeAt(0) - 96);
+137:           } else if (key.length === 1 && key >= 'A' && key <= 'Z') {
+138:             charToSend = String.fromCharCode(key.charCodeAt(0) - 64);
+139:           }
+140:         } else if (key === 'Tab') {
+141:           charToSend = '\t';
+142:         } else if (key === 'Escape') {
+143:           charToSend = '\x1b';
+144:         } else if (key === 'ArrowUp') {
+145:           charToSend = '\x1b[A';
+146:         } else if (key === 'ArrowDown') {
+147:           charToSend = '\x1b[B';
+148:         } else if (key === 'ArrowRight') {
+149:           charToSend = '\x1b[C';
+150:         } else if (key === 'ArrowLeft') {
+151:           charToSend = '\x1b[D';
+152:         } else if (key.length === 1) {
+153:           charToSend = key;
+154:         }
+155:         if (charToSend) {
+156:           webviewRef.current?.injectJavaScript(`if (window.term) { window.term.focus(); } true;`);
+157:           NodeRunner.send({ type: 'SHELL_PTY_DATA', payload: charToSend, sessionId: sessionId });
+158:         }
+159:       }
+160:     });
+161: 
+162:     return () => {
+163:       unsubscribe();
+164:       toolbarSub.remove();
+165:       DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+166:     };
+167:   }, [sessionId]);
+168: 
+169:   const onMessage = (event: any) => {
+170:     try {
+171:       const msg = JSON.parse(event.nativeEvent.data);
+172:       if (msg.type === 'READY') {
+173:         (global as any).activeInputTarget = sessionId;
+174:         DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+175:         if (!isStarted.current) {
+176:           isStarted.current = true;
+177:           NodeRunner.init().then(() => {
+178:             const globalCwd = PROJECTS_ROOT.replace('file://', '');
+179:             const targetCwd = projectId ? `${globalCwd}/${projectId}` : globalCwd;
+180:             NodeRunner.send({ 
+181:               type: 'SHELL_PTY_START', 
+182:               cwd: targetCwd, 
+183:               projectsRoot: globalCwd, 
+184:               projectName: projectId || 'DevFlux', 
+185:               sessionId: sessionId,
+186:               cols: msg.cols || 80,
+187:               rows: msg.rows || 24
+188:             });
+189:           });
+190:         }
+191:       } else if (msg.type === 'RESIZE') {
+192:         (global as any).activeInputTarget = sessionId;
+193:         DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+194:         NodeRunner.send({ type: 'SHELL_PTY_RESIZE', cols: msg.cols, rows: msg.rows, sessionId: sessionId });
+195:       } else if (msg.type === 'DATA') {
+196:         (global as any).activeInputTarget = sessionId;
+197:         DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+198:         NodeRunner.send({ type: 'SHELL_PTY_DATA', payload: msg.payload, sessionId: sessionId });
+199:       } else if (msg.type === 'FOCUS') {
+200:         (global as any).activeInputTarget = sessionId;
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

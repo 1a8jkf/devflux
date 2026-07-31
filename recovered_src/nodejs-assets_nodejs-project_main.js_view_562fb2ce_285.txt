@@ -1,0 +1,106 @@
+Created At: 2026-07-27T00:57:56Z
+Completed At: 2026-07-27T00:57:57Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js`
+Total Lines: 205
+Total Bytes: 8308
+Showing lines 78 to 175
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+78: 
+79:       const appLibDir = process.env.APP_NATIVE_LIB_DIR;
+80:       if (!appLibDir) {
+81:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\r\n[ERRO] APP_NATIVE_LIB_DIR não foi injetado pelo lado nativo. (Reinstale o APK!)\r\n' }));
+82:         return;
+83:       }
+84: 
+85:       let spawnCmd = path.join(appLibDir, 'libproot.so');
+86:       
+87:       console.log("[DevFlux] Executing proot directly from appLibDir: " + spawnCmd);
+88:       
+89:       let spawnArgs = [
+90:         '--link2symlink',
+91:         '-0',
+92:         '-r', res.path,
+93:         '-b', '/dev', '-b', '/proc', '-b', '/sys'
+94:       ];
+95:       if (data.projectsRoot) {
+96:           spawnArgs.push('-b', `${data.projectsRoot}:/projects`);
+97:       }
+98:       if (data.cwd && data.projectsRoot && data.cwd.startsWith(data.projectsRoot)) {
+99:           const relativeCwd = data.cwd.replace(data.projectsRoot, '').replace(/^\/+/, '');
+100:           spawnArgs.push('-w', relativeCwd ? `/projects/${relativeCwd}` : '/projects');
+101:       } else if (data.cwd) {
+102:           spawnArgs.push('-b', `${data.cwd}:/workspace`);
+103:           spawnArgs.push('-w', '/workspace');
+104:       } else {
+105:           spawnArgs.push('-w', '/root');
+106:       }
+107:       const projectName = data.projectName || 'workspace';
+108:       spawnArgs.push('/usr/bin/env', 'TERM=xterm-256color', '/bin/sh', '-i');
+109:       
+110:       const newPty = spawn(spawnCmd, spawnArgs, {
+111:         env: { 
+112:           ...process.env, 
+113:           PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:' + (process.env.PATH || ''),
+114:           PS1: `root # `,
+115:           TERM: 'xterm-256color', 
+116:           LD_LIBRARY_PATH: __dirname,
+117:           PROOT_NO_SECCOMP: '1',
+118:           PROOT_TMP_DIR: path.join(__dirname, 'tmp'), 
+119:           PROOT_LOADER: path.join(appLibDir, 'libproot-loader.so'),
+120:           PROOT_LOADER_32: path.join(appLibDir, 'libproot-loader32.so'),
+121:           CHOKIDAR_USEPOLLING: '1',
+122:           WATCHPACK_POLLING: 'true'
+123:         }
+124:       });
+125:       ptyProcesses[sid] = newPty;
+126: 
+127:       newPty.stdout.on('data', d => rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: d.toString().replace(/(?<!\r)\n/g, '\r\n') })));
+128:       newPty.stderr.on('data', d => {
+129:         let str = d.toString();
+130:         // Ignore TTY warnings from Alpine sh
+131:         if (str.includes("can't access tty; job control turned off")) return;
+132:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: str.replace(/(?<!\r)\n/g, '\r\n') }));
+133:       });
+134:       
+135:       newPty.on('error', err => {
+136:          delete ptyProcesses[sid];
+137:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: `\r\n[Failed to start process: ${err.message}]\r\n` }));
+138:       });
+139: 
+140:       newPty.on('close', (code, signal) => {
+141:         delete ptyProcesses[sid];
+142:         let exitMsg = code !== null ? `code ${code}` : `signal ${signal}`;
+143:         rn_bridge.channel.send(JSON.stringify({
+144:           type: 'CMD_OUT',
+145:           sessionId: sid,
+146:           payload: `\r\n[Process exited with ${exitMsg}]\r\n`
+147:         }));
+148:       });
+149:     }
+150:     else if (data.type === 'SHELL_PTY_DATA') {
+151:       const sid = data.sessionId || 'default';
+152:       const targetPty = ptyProcesses[sid];
+153:       if (targetPty && targetPty.stdin) {
+154:          let input = data.payload;
+155:          // Translate Enter (\r) to Newline (\n) because there is no PTY line discipline
+156:          if (input === '\r') {
+157:              targetPty.stdin.write('\n');
+158:              rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\r\n' }));
+159:          } else {
+160:              targetPty.stdin.write(input);
+161:              // Basic local echo
+162:              let echo = input;
+163:              if (echo === '\x7F') echo = '\b \b'; // Handle backspace
+164:              else if (echo === '\x03') echo = '^C\r\n';
+165:              rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: echo }));
+166:          }
+167:       }
+168:     }
+169:     else if (data.type === 'SHELL_PTY_STOP') {
+170:       const sid = data.sessionId || 'default';
+171:       if (ptyProcesses[sid]) {
+172:           ptyProcesses[sid].kill();
+173:           delete ptyProcesses[sid];
+174:       }
+175:     }
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

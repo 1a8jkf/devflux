@@ -1,0 +1,174 @@
+Created At: 2026-07-27T01:46:03Z
+Completed At: 2026-07-27T01:46:03Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js`
+Total Lines: 232
+Total Bytes: 9533
+Showing lines 45 to 210
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+45:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\x1b[2J\x1b[3J\x1b[H' }));
+46:          // Force shell to reprint prompt so it doesn't look dead
+47:          if (ptyProcesses[sid].stdin) {
+48:              ptyProcesses[sid].stdin.write('\n');
+49:          }
+50:          return;
+51:       }
+52:       
+53:       if (ptyProcesses[sid]) {
+54:          ptyProcesses[sid].kill();
+55:          delete ptyProcesses[sid];
+56:       }
+57:       
+58:       const onProgress = (text) => rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: text }));
+59:       
+60:       const res = await bootstrapLinux(onProgress);
+61:       if (!res.success) {
+62:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\r\nLinux bootstrap failed.\r\n' }));
+63:          return;
+64:       }
+65: 
+66:       const banner = [
+67:         "\r\n  ___         ___ _            ",
+68:         " |   \\ -____ | __| |_  _ _  _  ",
+69:         " | |) / -_) V / _|| | || | \\/ /",
+70:         " |___/\\___|\\_/|_| |_|\\_,_/>  < ",
+71:         "                         /_/\\_\\",
+72:         "",
+73:         " Welcome to DevFlux Shell!",
+74:         " Type any Linux command to start.",
+75:         "\r\n"
+76:       ].join("\r\n");
+77:       rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: banner }));
+78: 
+79:       const appLibDir = process.env.APP_NATIVE_LIB_DIR;
+80:       if (!appLibDir) {
+81:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\r\n[ERRO] APP_NATIVE_LIB_DIR não foi injetado pelo lado nativo. (Reinstale o APK!)\r\n' }));
+82:         return;
+83:       }
+84: 
+85:       let prootCmd = path.join(appLibDir, 'libproot.so');
+86:       let prootArgs = [
+87:         '--link2symlink',
+88:         '-0',
+89:         '-r', res.path,
+90:         '-b', '/dev', '-b', '/proc', '-b', '/sys'
+91:       ];
+92:       if (data.projectsRoot) {
+93:           prootArgs.push('-b', `${data.projectsRoot}:/projects`);
+94:       }
+95:       if (data.cwd && data.projectsRoot && data.cwd.startsWith(data.projectsRoot)) {
+96:           const relativeCwd = data.cwd.replace(data.projectsRoot, '').replace(/^\/+/, '');
+97:           prootArgs.push('-w', relativeCwd ? `/projects/${relativeCwd}` : '/projects');
+98:       } else if (data.cwd) {
+99:           prootArgs.push('-b', `${data.cwd}:/workspace`);
+100:           prootArgs.push('-w', '/workspace');
+101:       } else {
+102:           prootArgs.push('-w', '/root');
+103:       }
+104:       const projectName = data.projectName || 'workspace';
+105:       prootArgs.push('/usr/bin/env', 'TERM=xterm-256color', '/bin/sh', '-i');
+106:       
+107:       let ptyWrapper = path.join(appLibDir, 'libpty-wrapper.so');
+108:       if (!fs.existsSync(ptyWrapper)) {
+109:         ptyWrapper = path.join(__dirname, 'libpty-wrapper.so');
+110:       }
+111:       const usePty = fs.existsSync(ptyWrapper);
+112:       let spawnCmd = usePty ? ptyWrapper : prootCmd;
+113:       let spawnArgs = usePty ? [prootCmd, ...prootArgs] : prootArgs;
+114: 
+115:       console.log(`[DevFlux] Executing shell (PTY=${usePty}): ${spawnCmd} ${spawnArgs.join(' ')}`);
+116: 
+117:       const newPty = spawn(spawnCmd, spawnArgs, {
+118:         stdio: usePty ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+119:         env: { 
+120:           ...process.env, 
+121:           PTY_COLS: String(data.cols || 80),
+122:           PTY_ROWS: String(data.rows || 24),
+123:           PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:' + (process.env.PATH || ''),
+124:           PS1: `root # `,
+125:           TERM: 'xterm-256color', 
+126:           LD_LIBRARY_PATH: __dirname,
+127:           PROOT_NO_SECCOMP: '1',
+128:           PROOT_TMP_DIR: path.join(__dirname, 'tmp'), 
+129:           PROOT_LOADER: path.join(appLibDir, 'libproot-loader.so'),
+130:           PROOT_LOADER_32: path.join(appLibDir, 'libproot-loader32.so'),
+131:           CHOKIDAR_USEPOLLING: '1',
+132:           WATCHPACK_POLLING: 'true'
+133:         }
+134:       });
+135:       newPty.isRealPty = usePty;
+136:       ptyProcesses[sid] = newPty;
+137: 
+138:       newPty.stdout.on('data', d => rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: d.toString().replace(/(?<!\r)\n/g, '\r\n') })));
+139:       newPty.stderr.on('data', d => {
+140:         let str = d.toString();
+141:         // Ignore TTY warnings from Alpine sh
+142:         if (str.includes("can't access tty; job control turned off")) return;
+143:         rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: str.replace(/(?<!\r)\n/g, '\r\n') }));
+144:       });
+145:       
+146:       newPty.on('error', err => {
+147:          delete ptyProcesses[sid];
+148:          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: `\r\n[Failed to start process: ${err.message}]\r\n` }));
+149:       });
+150: 
+151:       newPty.on('close', (code, signal) => {
+152:         delete ptyProcesses[sid];
+153:         let exitMsg = code !== null ? `code ${code}` : `signal ${signal}`;
+154:         rn_bridge.channel.send(JSON.stringify({
+155:           type: 'CMD_OUT',
+156:           sessionId: sid,
+157:           payload: `\r\n[Process exited with ${exitMsg}]\r\n`
+158:         }));
+159:       });
+160:     }
+161:     else if (data.type === 'SHELL_PTY_DATA') {
+162:       const sid = data.sessionId || 'default';
+163:       const targetPty = ptyProcesses[sid];
+164:       if (targetPty && targetPty.stdin) {
+165:          let input = data.payload;
+166:          if (targetPty.isRealPty) {
+167:              // Real PTY handles echo, CR/LF translation, and signals in the kernel line discipline
+168:              targetPty.stdin.write(input);
+169:          } else {
+170:              // Translate Enter (\r) to Newline (\n) because there is no PTY line discipline
+171:              if (input === '\r') {
+172:                  targetPty.stdin.write('\n');
+173:                  rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: '\r\n' }));
+174:              } else {
+175:                  targetPty.stdin.write(input);
+176:                  // Basic local echo
+177:                  let echo = input;
+178:                  if (echo === '\x7F') echo = '\b \b'; // Handle backspace
+179:                  else if (echo === '\x03') echo = '^C\r\n';
+180:                  rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: echo }));
+181:              }
+182:          }
+183:       }
+184:     }
+185:     else if (data.type === 'SHELL_PTY_RESIZE') {
+186:       const sid = data.sessionId || 'default';
+187:       const targetPty = ptyProcesses[sid];
+188:       if (targetPty && targetPty.isRealPty && targetPty.stdio && targetPty.stdio[3]) {
+189:         const cols = data.cols || 80;
+190:         const rows = data.rows || 24;
+191:         try {
+192:           targetPty.stdio[3].write(`${cols} ${rows}\n`);
+193:         } catch (e) {}
+194:       }
+195:     }
+196:     else if (data.type === 'SHELL_PTY_STOP') {
+197:       const sid = data.sessionId || 'default';
+198:       if (ptyProcesses[sid]) {
+199:           ptyProcesses[sid].kill();
+200:           delete ptyProcesses[sid];
+201:       }
+202:     }
+203:     else if (data.type === 'GET_SYS_STATS') {
+204:       try {
+205:         const stats = {
+206:           totalmem: os.totalmem(),
+207:           freemem: os.freemem(),
+208:           cpus: os.cpus().length,
+209:           uptime: os.uptime(),
+210:           platform: os.platform(),
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

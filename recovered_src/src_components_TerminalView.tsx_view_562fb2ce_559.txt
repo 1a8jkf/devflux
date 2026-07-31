@@ -1,0 +1,59 @@
+Created At: 2026-07-27T01:49:17Z
+Completed At: 2026-07-27T01:49:17Z
+File Path: `file:///C:/Users/user01/.gemini/antigravity-ide/brain/562fb2ce-162b-4c2e-8771-ace3ae7633b7/walkthrough.md`
+Total Lines: 51
+Total Bytes: 6455
+Showing lines 1 to 51
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: # Walkthrough - PTY Real (Master/Slave nativo em C), Teclado Dev & Console do Projeto
+2: 
+3: Transformamos o motor Linux do DevFlux ao substituir a emulação de pipes simples (`child_process.spawn`) por um **PTY (Pseudo-Terminal Master/Slave)** verdadeiro nativo em C (`libpty-wrapper.so`), integramos a comunicação em tempo real de redimensionamento de tela (Xterm auto-fit) via canal dedicado e `ioctl(TIOCSWINSZ)`, e corrigimos integralmente o fluxo de teclado virtual de atalhos e console por projeto.
+4: 
+5: ## Alterações Realizadas
+6: 
+7: ### 1. Teclado Virtual de Atalhos Dev & Posicionamento Dinâmico ([KeyboardToolbar.tsx](file:///wsl$/Ubuntu/home/marcos/DevFlux/src/components/KeyboardToolbar.tsx))
+8: - **Ocultação Absoluta Quando Fechado**: A barra de atalhos agora só é renderizada no DOM e na tela quando o teclado virtual do Android efetivamente se abre (`keyboardHeight > 0`) e um editor/terminal está ativo. Quando o teclado está fechado, o componente retorna `null`, evitando que fique fixado na parte inferior da tela abaixo dos botões de navegação virtuais do Android (|||, O, <).
+9: - **Posicionamento Limpo Acima do Teclado**: Implementado cálculo de deslocamento (`windowOffset`) através da comparação da altura da janela (`Dimensions.get('window')`). Seja no modo *adjustResize* do Android ou em telas *Edge-to-Edge* / *BottomSheet*, a barra agora sobe perfeitamente e se posiciona logo acima do teclado virtual (`marginBottom: windowOffset + 2`).
+10: - **Proteção contra Perda de Foco**: Adicionado controle com `useRef(isInteractingRef)` durante o toque nos botões de atalho (`Tab`, `Ctrl`, `Esc`, Setas, etc.), evitando que o evento nativo feche a barra indevidamente.
+11: 
+12: ### 2. Integração e Inicialização Dinâmica de Terminal ([TerminalView.tsx](file:///wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx), [TerminalSheet.tsx](file:///wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalSheet.tsx))
+13: - **Correção da Sessão no Modo Monaco Editor**: Resolvido o bug crítico em que a aba de terminal no editor Monaco ficava preta, vazia e inoperante. Anteriormente, o componente montava com ID temporário (`editor-global`) e bloqueava a inicialização da sessão definitiva quando o `projectId` era resolvido. Agora, ao detectar mudança de `sessionId` ou `projectId`, o sistema emite `SHELL_PTY_START` dinamicamente para o Node.js, garantindo que o terminal responda no diretório exato (`/projects/{nome-do-projeto}`).
+14: - **Redimensionamento Inteligente em Gavetas (`onLayout`)**: Vinculado o evento nativo `onLayout` da `View` container em `TerminalView.tsx` ao Xterm `fitAddon.fit()`. Quando o usuário arrasta ou expande a gaveta inferior (`TerminalSheet`) de 24px para 50% ou 90%, o terminal recalcula colunas e linhas instantaneamente e notifica o backend Node.js via `RESIZE`.
+15: - **Foco e Interação Touch Aprimorados**: Adicionado foco automático na textarea oculta do Xterm ao clicar ou tocar no terminal (`touchstart`, `click`), garantindo abertura instantânea do teclado e recepção contínua de teclas de atalho.
+16: - **Gaveta Sem Interferência Touch**: Alterado o comportamento de teclado do `@gorhom/bottom-sheet` para `keyboardBehavior="extend"`, evitando que animações de pan bloqueiem eventos de foco do WebView.
+17: 
+18: ### 3. Console do Projeto & Remoção do System Monitor ([terminal.tsx](file:///wsl$/Ubuntu/home/marcos/DevFlux/src/app/editor/terminal.tsx))
+19: - **Console do Projeto Nativo**: Roteamento dinâmico de diretório de trabalho no start do PTY (`cwd: /projects/{projectId}`).
+20: - **Instalação e Comandos Funcionais**: Permite rodar `npm install`, `python script.py`, `git status` ou editar arquivos no projeto sem precisar navegar manualmente com `cd`.
+21: - **Interface Limpa e Direta**: Removida a aba e as requisições de *System Monitor* do `TerminalSheet.tsx`, simplificando a interface para focar exclusivamente na produtividade do desenvolvedor dentro da sua workspace.
+22: 
+23: ### 4. Motor PTY Nativo em C ([pty-wrapper.c](file:///wsl$/Ubuntu/home/marcos/DevFlux/pty-wrapper.c))
+24: - Suporte a variáveis de ambiente (`PTY_COLS` e `PTY_ROWS`) para definir a estrutura `struct winsize ws` inicial antes de `forkpty()`.
+25: - Criação de um canal de comunicação IPC sem bloqueio utilizando o descritor de arquivo 3 (`RESIZE_FD = 3`).
+26: - Loop `select()` aprimorado para monitorar `RESIZE_FD`: ao receber comandos no formato `<cols> <rows>\n`, o binário realiza o parse seguro das novas dimensões e invoca `ioctl(master, TIOCSWINSZ, &ws)`, adaptando o terminal escravo em milissegundos e emitindo sinal `SIGWINCH` para a aplicação Linux.
+27: 
+28: ### 5. Backend Orquestrador Node.js ([main.js](file:///wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js))
+29: - Detecção em tempo de execução da presença de `libpty-wrapper.so` no `appLibDir`.
+30: - Inicialização do PTY wrapper executando `libproot.so` como processo filho e configurando 4 pipes nativos via `stdio: ['pipe', 'pipe', 'pipe', 'pipe']`.
+31: - Implementação de handler para `SHELL_PTY_RESIZE` que escreve `<cols> <rows>\n` em `targetPty.stdio[3]`.
+32: - Desativação automática do eco local na presença de PTY nativo, deixando o Kernel Line Discipline gerenciar sinais (`Ctrl+C`), backspace e eco.
+33: 
+34: ## Resultados de Verificação
+35: 
+36: ### Verificação Automatizada
+37: - **Compilação Cruzada e Montagem do APK**: Validamos a compilação do NDK e o empacotamento idempotente via Gradle no script `build_apk.sh`. O APK final é gerado diretamente no Desktop do Windows: `C:\Users\user01\Desktop\DevFlux-Release.apk`.
+38: 
+39: ### Verificação Manual Recomendada
+40: 1. Instalar e abrir o novo APK (`DevFlux-Release.apk`).
+41: 2. **Teclado de Atalhos**:
+42:    - Abrir um arquivo no Monaco Editor ou abrir o terminal e tocar na área de digitação.
+43:    - Verificar que a barra de ferramentas superior com `TAB`, `CTRL`, `ESC`, `↑`, `↓`, `~`, `|` **não aparece quando o teclado está fechado**.
+44:    - Tocar no editor/terminal para subir o teclado e confirmar que a barra **sobe com ele, posicionada de forma limpa logo acima do teclado virtual**.
+45: 3. **Console no Modo Monaco Editor (`TerminalSheet`)**:
+46:    - Abrir um projeto, entrar no Monaco Editor e puxar a gaveta inferior de terminal (`TerminalSheet`).
+47:    - Verificar que o terminal inicia corretamente, exibindo o prompt e respondendo imediatamente à digitação do teclado e botões de atalho.
+48:    - Expandir a gaveta para 50% e 90% e constatar que o terminal redimensiona perfeitamente.
+49: 
+50: 
+51: 
+The above content shows the entire, complete file contents of the requested file.

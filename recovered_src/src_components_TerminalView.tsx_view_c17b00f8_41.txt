@@ -1,0 +1,94 @@
+Created At: 2026-07-27T16:31:08Z
+Completed At: 2026-07-27T16:31:08Z
+File Path: `file://wsl.localhost/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx`
+Total Lines: 371
+Total Bytes: 13778
+Showing lines 220 to 305
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+220: 
+221:   useEffect(() => {
+222:     (global as any).activeInputTarget = sessionId;
+223:     DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+224:     const unsubscribe = NodeRunner.addListener((msg) => {
+225:       if ((msg.type === 'CMD_OUT' || msg.type === 'CMD_ERR') && msg.sessionId === sessionId) {
+226:         const safePayload = JSON.stringify(msg.payload);
+227:         const js = `window.postMessage(JSON.stringify({ type: 'WRITE', payload: ${safePayload} }), '*'); true;`;
+228:         webviewRef.current?.injectJavaScript(js);
+229:       }
+230:     });
+231: 
+232:     const toolbarSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION', (action) => {
+233:       const currentTarget = (global as any).activeInputTarget;
+234:       if (currentTarget && currentTarget !== sessionId && currentTarget !== 'terminal-' + sessionId && !String(currentTarget).startsWith('terminal')) {
+235:         return;
+236:       }
+237:       if (action.actionType === 'keypress') {
+238:         const { key, ctrlKey } = action.meta;
+239:         let charToSend = '';
+240:         if (ctrlKey) {
+241:           if (key.length === 1 && key >= 'a' && key <= 'z') {
+242:             charToSend = String.fromCharCode(key.charCodeAt(0) - 96);
+243:           } else if (key.length === 1 && key >= 'A' && key <= 'Z') {
+244:             charToSend = String.fromCharCode(key.charCodeAt(0) - 64);
+245:           }
+246:         } else if (key === 'Tab') {
+247:           charToSend = '\t';
+248:         } else if (key === 'Escape') {
+249:           charToSend = '\x1b';
+250:         } else if (key === 'ArrowUp') {
+251:           charToSend = '\x1b[A';
+252:         } else if (key === 'ArrowDown') {
+253:           charToSend = '\x1b[B';
+254:         } else if (key === 'ArrowRight') {
+255:           charToSend = '\x1b[C';
+256:         } else if (key === 'ArrowLeft') {
+257:           charToSend = '\x1b[D';
+258:         } else if (key.length === 1) {
+259:           charToSend = key;
+260:         }
+261:         if (charToSend) {
+262:           webviewRef.current?.injectJavaScript(`
+263:             if (window.term) { window.term.focus(); }
+264:             var ta = document.querySelector('.xterm-helper-textarea') || document.querySelector('textarea');
+265:             if (ta) { ta.focus(); }
+266:             true;
+267:           `);
+268:           NodeRunner.send({ type: 'SHELL_PTY_DATA', payload: charToSend, sessionId: sessionId });
+269:         }
+270:       }
+271:     });
+272: 
+273:     return () => {
+274:       unsubscribe();
+275:       toolbarSub.remove();
+276:       DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+277:     };
+278:   }, [sessionId]);
+279: 
+280:   const onMessage = (event: any) => {
+281:     try {
+282:       const msg = JSON.parse(event.nativeEvent.data);
+283:       if (msg.type === 'READY') {
+284:         isReadyRef.current = true;
+285:         const c = msg.cols || 80;
+286:         const r = msg.rows || 24;
+287:         lastSizeRef.current = { cols: c, rows: r };
+288:         (global as any).activeInputTarget = sessionId;
+289:         startPtySession(c, r);
+290:       } else if (msg.type === 'RESIZE') {
+291:         lastSizeRef.current = { cols: msg.cols, rows: msg.rows };
+292:         (global as any).activeInputTarget = sessionId;
+293:         NodeRunner.send({ type: 'SHELL_PTY_RESIZE', cols: msg.cols, rows: msg.rows, sessionId: sessionId });
+294:       } else if (msg.type === 'DATA') {
+295:         (global as any).activeInputTarget = sessionId;
+296:         NodeRunner.send({ type: 'SHELL_PTY_DATA', payload: msg.payload, sessionId: sessionId });
+297:       } else if (msg.type === 'FOCUS') {
+298:         (global as any).activeInputTarget = sessionId;
+299:         DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
+300:       } else if (msg.type === 'BLUR') {
+301:         DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+302:       } else if (msg.type === 'JS_ERROR') {
+303:         setErrorMsg(msg.payload);
+304:         console.error("Terminal Webview JS Error:", msg.payload);
+305:       }
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

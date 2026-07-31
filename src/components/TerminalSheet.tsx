@@ -1,157 +1,187 @@
-import React, { useState, forwardRef, useImperativeHandle, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
+import React, { useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions } from 'react-native';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from './Icon';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TerminalView } from './TerminalView';
 
-interface TerminalLog {
-  id: string;
-  text: string;
-  type: 'output' | 'error' | 'success' | 'input';
-}
-
-export interface TerminalSheetRef {
-  expand: () => void;
-  collapse: () => void;
-  log: (text: string, type?: TerminalLog['type']) => void;
-}
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const HANDLE_HEIGHT = 36;
+const MAX_HEIGHT = SCREEN_HEIGHT * 0.9;
+const MID_HEIGHT = SCREEN_HEIGHT * 0.5;
 
 interface TerminalSheetProps {
   projectId: string;
+  visible?: boolean;
 }
 
-export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId }, ref) => {
+export interface TerminalSheetRef {
+  snapToIndex: (index: number) => void;
+  expand: () => void;
+  collapse: () => void;
+  runCommand: (cmd: string) => void;
+}
+
+export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId, visible = true }, ref) => {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const insets = useSafeAreaInsets();
-  const bottomSheetRef = useRef<BottomSheet>(null);
-  const scrollViewRef = useRef<ScrollView>(null);
-  const [logs, setLogs] = useState<TerminalLog[]>([]);
+  
+  const MIN_HEIGHT = HANDLE_HEIGHT + insets.bottom;
 
-  const appendLog = (text: string, type: TerminalLog['type'] = 'output') => {
-    setLogs(prev => [...prev, { id: Date.now().toString() + Math.random(), text, type }]);
+  const heightAnim = useRef(new Animated.Value(MIN_HEIGHT)).current;
+  const lastHeight = useRef(MIN_HEIGHT);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  useEffect(() => {
+    // If insets change dynamically, update height if collapsed
+    if (!isExpanded) {
+      heightAnim.setValue(MIN_HEIGHT);
+      lastHeight.current = MIN_HEIGHT;
+    }
+  }, [insets.bottom]);
+
+  const snapTo = (target: number) => {
+    lastHeight.current = target;
+    setIsExpanded(target > MIN_HEIGHT + 10);
+    Animated.spring(heightAnim, {
+      toValue: target,
+      useNativeDriver: false,
+      friction: 10,
+      tension: 60,
+    }).start();
   };
 
+  const terminalViewRef = useRef<any>(null);
+
   useImperativeHandle(ref, () => ({
-    expand: () => bottomSheetRef.current?.expand(),
-    collapse: () => bottomSheetRef.current?.collapse(),
-    log: appendLog,
+    snapToIndex: (index: number) => {
+      const targets = [MIN_HEIGHT, MID_HEIGHT, MAX_HEIGHT];
+      snapTo(targets[index] || MIN_HEIGHT);
+    },
+    expand: () => snapTo(MAX_HEIGHT),
+    collapse: () => snapTo(MIN_HEIGHT),
+    runCommand: (cmd: string) => {
+      terminalViewRef.current?.runCommand?.(cmd);
+    }
   }));
 
-  React.useEffect(() => {
-    // Console Log Listener
-    import('react-native').then(({ DeviceEventEmitter }) => {
-      const sub = DeviceEventEmitter.addListener('TERMINAL_LOG', (data) => {
-        appendLog(`[console.${data.level}] ${data.message}`, data.level === 'error' ? 'error' : 'output');
-      });
-      return () => sub.remove();
-    });
-  }, []);
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
+      onPanResponderGrant: () => {
+        // @ts-ignore
+        lastHeight.current = heightAnim._value;
+      },
+      onPanResponderMove: (_, gs) => {
+        let newHeight = lastHeight.current - gs.dy;
+        if (newHeight < MIN_HEIGHT) newHeight = MIN_HEIGHT;
+        if (newHeight > MAX_HEIGHT) newHeight = MAX_HEIGHT;
+        heightAnim.setValue(newHeight);
+      },
+      onPanResponderRelease: (_, gs) => {
+        // @ts-ignore
+        const current = heightAnim._value;
+        const velocity = gs.vy;
+
+        // Snap to nearest point based on position and velocity
+        if (velocity > 1.5 || current < MIN_HEIGHT + 40) {
+          snapTo(MIN_HEIGHT);
+        } else if (velocity < -1.5 || current > MID_HEIGHT + (MAX_HEIGHT - MID_HEIGHT) / 2) {
+          snapTo(MAX_HEIGHT);
+        } else if (current > MIN_HEIGHT + 40) {
+          snapTo(MID_HEIGHT);
+        } else {
+          snapTo(MIN_HEIGHT);
+        }
+      },
+    })
+  ).current;
+
+  const toggleExpand = () => {
+    if (isExpanded) {
+      snapTo(MIN_HEIGHT);
+    } else {
+      snapTo(MID_HEIGHT);
+    }
+  };
 
   return (
-    <BottomSheet
-      ref={bottomSheetRef}
-      index={0}
-      snapPoints={[24, '50%', '90%']}
-      backgroundStyle={styles.background}
-      handleIndicatorStyle={styles.indicator}
-      bottomInset={insets.bottom}
-    >
-      <BottomSheetView style={styles.contentContainer}>
-        <View style={styles.header}>
-          <View style={{ flex: 1 }}><Text style={styles.headerText}>WEB CONSOLE</Text></View>
-          <View style={styles.actions}>
-            <TouchableOpacity onPress={() => setLogs([])}>
-              <Icon name="Trash2" size={16} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
-            <View style={{ width: 16 }} />
-            <TouchableOpacity onPress={() => bottomSheetRef.current?.collapse()}>
-              <Icon name="ChevronDown" size={16} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-        </View>
+    <Animated.View style={[styles.container, { height: heightAnim, paddingBottom: insets.bottom, display: visible ? 'flex' : 'none' }]}>
+      {/* Drag handle */}
+      <View {...panResponder.panHandlers} style={styles.handleArea}>
+        <View style={styles.handleBar} />
+      </View>
 
-        <ScrollView 
-          style={styles.terminalArea} 
-          ref={scrollViewRef}
-          keyboardShouldPersistTaps="handled"
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: false })}
-        >
-          {logs.map(log => (
-            <Text 
-              key={log.id} 
-              style={[
-                styles.terminalOutput, 
-                log.type === 'error' && styles.terminalError,
-                log.type === 'success' && styles.terminalSuccess,
-                log.type === 'input' && styles.terminalInput,
-              ]}
-            >
-              {log.text}
-            </Text>
-          ))}
-          <View style={{ height: 20 }} />
-        </ScrollView>
-      </BottomSheetView>
-    </BottomSheet>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.greenDot} />
+        <Text style={styles.headerTitle} numberOfLines={1}>projects/{projectId}</Text>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity onPress={toggleExpand} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Icon name={isExpanded ? 'ChevronDown' : 'ChevronUp'} size={16} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Terminal content — uses separate Alpine session for each project */}
+      <View style={styles.terminalArea}>
+        <TerminalView ref={terminalViewRef} projectId={projectId} sessionId={`sheet-${projectId}`} />
+      </View>
+    </Animated.View>
   );
 });
 
 const getStyles = (theme: AppTheme) => StyleSheet.create({
-  background: {
-    backgroundColor: theme.colors.bgElevated,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+  container: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#000000',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    overflow: 'hidden',
+    zIndex: 100,
+    elevation: 20,
   },
-  indicator: {
+  handleArea: {
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000000',
+  },
+  handleBar: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: theme.colors.border,
-    width: 40,
-  },
-  contentContainer: {
-    flex: 1,
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: '#000000',
   },
-  headerText: {
-    fontFamily: theme.typography.ui,
-    fontSize: 12,
-    fontWeight: '600',
+  greenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4CAF50',
+  },
+  headerTitle: {
+    fontFamily: theme.typography.mono,
+    fontSize: 11,
     color: theme.colors.textSecondary,
-    letterSpacing: 1,
-  },
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    marginLeft: 6,
+    maxWidth: '70%',
   },
   terminalArea: {
     flex: 1,
-    padding: 16,
-  },
-  terminalOutput: {
-    fontFamily: theme.typography.mono,
-    color: theme.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  terminalInput: {
-    color: theme.colors.textPrimary,
-  },
-  terminalError: {
-    color: '#FF6B6B',
-  },
-  terminalSuccess: {
-    color: theme.colors.accentTeal,
+    backgroundColor: '#000000',
   },
 });

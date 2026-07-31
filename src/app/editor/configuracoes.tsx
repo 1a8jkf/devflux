@@ -6,6 +6,7 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { Icon } from '../../components/Icon';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function SettingsScreen() {
   const { theme, variant, setThemeVariant } = useAppTheme();
@@ -13,6 +14,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { settings, updateSettings } = useSettings();
+  const { language, setLanguage, t } = useLanguage();
 
   const handleFontSizeChange = (change: number) => {
     const newSize = Math.max(10, Math.min(30, settings.fontSize + change));
@@ -22,14 +24,41 @@ export default function SettingsScreen() {
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.navigate('/')}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.title}>Configurações Gerais</Text>
+        <Text style={styles.title}>{t('drawer.settings', 'Configurações Gerais')}</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>APARÊNCIA</Text>
+          <Text style={styles.sectionTitle}>{t('settings.appearance', 'APARÊNCIA')}</Text>
+          
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingTitle}>{t('settings.language', 'Idioma')}</Text>
+              <Text style={styles.settingDesc}>{t('settings.selectLanguage', 'Selecione o idioma da interface')}</Text>
+            </View>
+            <View style={styles.controlsRow}>
+              {(['pt', 'en', 'es'] as const).map((lang) => (
+                <TouchableOpacity
+                  key={lang}
+                  style={[
+                    styles.controlBtn,
+                    { width: 40, backgroundColor: language === lang ? theme.colors.accentBlue : theme.colors.bgSurface }
+                  ]}
+                  onPress={() => setLanguage(lang)}
+                >
+                  <Text style={{
+                    color: language === lang ? '#FFF' : theme.colors.textPrimary,
+                    fontFamily: theme.typography.uiBold,
+                    fontSize: 12
+                  }}>
+                    {lang.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
           
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>

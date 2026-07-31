@@ -1,0 +1,54 @@
+Created At: 2026-07-27T01:28:21Z
+Completed At: 2026-07-27T01:28:21Z
+File Path: `file:///C:/Users/user01/.gemini/antigravity-ide/brain/562fb2ce-162b-4c2e-8771-ace3ae7633b7/walkthrough.md`
+Total Lines: 46
+Total Bytes: 4173
+Showing lines 1 to 46
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: # Walkthrough - PTY Real (Master/Slave nativo em C) & Sincronização Dinâmica de Tamanho (SIGWINCH)
+2: 
+3: Transformamos o motor Linux do DevFlux ao substituir a emulação de pipes simples (`child_process.spawn`) por um **PTY (Pseudo-Terminal Master/Slave)** verdadeiro nativo em C (`libpty-wrapper.so`), e integramos a comunicação em tempo real de redimensionamento de tela (Xterm auto-fit) via canal dedicado e `ioctl(TIOCSWINSZ)`.
+4: 
+5: ## Alterações Realizadas
+6: 
+7: ### 1. Motor PTY Nativo em C ([pty-wrapper.c](file:///wsl$/Ubuntu/home/marcos/DevFlux/pty-wrapper.c))
+8: - Suporte a variáveis de ambiente (`PTY_COLS` e `PTY_ROWS`) para definir a estrutura `struct winsize ws` inicial antes de `forkpty()`.
+9: - Criação de um canal de comunicação IPC sem bloqueio utilizando o descritor de arquivo 3 (`RESIZE_FD = 3`).
+10: - Loop `select()` aprimorado para monitorar `RESIZE_FD`: ao receber comandos no formato `<cols> <rows>\n`, o binário realiza o parse seguro das novas dimensões e invoca `ioctl(master, TIOCSWINSZ, &ws)`, adaptando o terminal escravo em milissegundos e emitindo sinal `SIGWINCH` para a aplicação Linux.
+11: 
+12: ### 2. Automação de Build Android ([build_apk.sh](file:///wsl$/Ubuntu/home/marcos/DevFlux/build_apk.sh))
+13: - Inclusão da etapa de compilação cruzada com o Android NDK no WSL:
+14:   ```bash
+15:   /home/marcos/Android/Sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang -O2 -fPIE -pie -o libpty-wrapper.so pty-wrapper.c
+16:   ```
+17: - Cópia automática de `libpty-wrapper.so` para `android/app/src/main/jniLibs/arm64-v8a/` (para ser extraído pelo Android ao `APP_NATIVE_LIB_DIR`) e para `nodejs-assets/nodejs-project/`.
+18: 
+19: ### 3. Backend Orquestrador Node.js ([main.js](file:///wsl$/Ubuntu/home/marcos/DevFlux/nodejs-assets/nodejs-project/main.js))
+20: - Detecção em tempo de execução da presença de `libpty-wrapper.so` no `appLibDir`.
+21: - Inicialização do PTY wrapper executando `libproot.so` como processo filho e configurando 4 pipes nativos via `stdio: ['pipe', 'pipe', 'pipe', 'pipe']`.
+22: - Injeção das dimensões iniciais (`PTY_COLS` e `PTY_ROWS`) recebidas no start da sessão.
+23: - Implementação de handler para `SHELL_PTY_RESIZE` que escreve `<cols> <rows>\n` em `targetPty.stdio[3]`.
+24: - Desativação automática do eco local e da conversão manual `\r` -> `\n` na presença de PTY nativo, deixando o Kernel Line Discipline gerenciar sinais (`Ctrl+C`), backspace e eco.
+25: 
+26: ### 4. Frontend Xterm & React Native ([TerminalView.tsx](file:///wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx))
+27: - Conexão do evento `term.onResize(({ cols, rows }) => ...)` no Xterm.js para emitir postMessage `{ type: 'RESIZE', cols, rows }` à React Native Bridge sempre que o terminal ou janela mudar de tamanho.
+28: - Envio das colunas e linhas exatas no momento do boot (`READY`) e no início da sessão (`SHELL_PTY_START`).
+29: - Roteamento nativo de `RESIZE` no componente React para disparar `NodeRunner.send({ type: 'SHELL_PTY_RESIZE', ... })`.
+30: 
+31: ## Resultados de Verificação
+32: 
+33: ### Verificação Automatizada (WSL / NDK)
+34: - **Compilação Cruzada**: Validamos a compilação cruzada do arquivo C com o toolchain clang do Android NDK API 24:
+35:   ```
+36:   -rwxr-xr-x 1 marcos marcos 8.6K Jul 26 21:57 libpty-wrapper.so
+37:   libpty-wrapper.so: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /system/bin/linker64, for Android 24, built by NDK r27b (12297006), not stripped
+38:   ```
+39: 
+40: ### Verificação Manual Recomendada
+41: 1. Gerar o novo APK rodando `./build_apk.sh`.
+42: 2. Abrir o DevFlux no dispositivo móvel e iniciar o terminal:
+43:    - **Programas Interativos de Tela Cheia**: Executar `vi /root/test.txt` ou `nano /root/test.txt` e verificar que a navegação com o teclado de atalhos e a tela cheia operam perfeitamente sem quebras de linha ou caracteres de eco duplicados.
+44:    - **Autocompletar e REPL**: Rodar `python3 -i` ou `node -i` e validar o autocompletar e histórico com setas (↑/↓).
+45:    - **Teste de SIGWINCH**: Rodar `top` ou `htop`, girar a tela do celular entre paisagem e retrato, e verificar o layout redesenhando instantaneamente para se ajustar às novas dimensões col/row.
+46: 
+The above content shows the entire, complete file contents of the requested file.

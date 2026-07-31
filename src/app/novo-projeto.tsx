@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
 import { FileSystemService, ProjectType } from '../services/FileSystemService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PACKAGES: Record<string, string[]> = {
   html: [],
@@ -25,6 +26,16 @@ export default function NovoProjetoScreen() {
   const [installPath, setInstallPath] = useState('/storage/projects/');
   const [selectedType, setSelectedType] = useState<ProjectType | null>(null);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
+  const [alpineInstalled, setAlpineInstalled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const check = async () => {
+      const done = await AsyncStorage.getItem('devflux_alpine_installed');
+      setAlpineInstalled(done === 'true');
+    };
+    check();
+  }, []);
+
   const handleNext = () => {
     if (step === 1 && newProjectName.trim() && installPath.trim()) setStep(2);
     else if (step === 2 && selectedType) setStep(3);
@@ -32,6 +43,19 @@ export default function NovoProjetoScreen() {
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim() || !selectedType) return;
+
+    // Block if Alpine Linux is not installed
+    if (!alpineInstalled) {
+      Alert.alert(
+        'Alpine Linux Necessário',
+        'Para criar projetos, é necessário instalar o Alpine Linux primeiro. Vá até a tela inicial e execute a instalação.',
+        [
+          { text: 'Voltar', onPress: () => router.back() },
+          { text: 'OK', style: 'cancel' }
+        ]
+      );
+      return;
+    }
     
     // Pass custom path combined with name to FileSystemService if we supported it
     // For now we'll just use the name as projectId to maintain compatibility with our simple VFS
@@ -45,7 +69,8 @@ export default function NovoProjetoScreen() {
         projectId: newProject.id, 
         isNewProject: 'true', 
         deps: selectedPackages.join(','),
-        cwd: installPath
+        cwd: installPath,
+        templateType: selectedType
       } 
     });
   };

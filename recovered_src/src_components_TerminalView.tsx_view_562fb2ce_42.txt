@@ -1,0 +1,194 @@
+Created At: 2026-07-27T00:37:56Z
+Completed At: 2026-07-27T00:37:56Z
+File Path: `file://wsl$/Ubuntu/home/marcos/DevFlux/src/components/TerminalView.tsx`
+Total Lines: 186
+Total Bytes: 5928
+Showing lines 1 to 186
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: import React, { useRef, useEffect, useState } from 'react';
+2: import { View, StyleSheet, Text } from 'react-native';
+3: import { WebView } from 'react-native-webview';
+4: import { NodeRunner } from '../utils/nodeRunner';
+5: import { PROJECTS_ROOT } from '../services/FileSystemService';
+6: 
+7: const HTML_CONTENT = `
+8: <!DOCTYPE html>
+9: <html>
+10:   <head>
+11:     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+12:     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+13:     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+14:     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+15:     <style>
+16:       body, html { margin: 0; padding: 0; height: 100%; width: 100%; background-color: #000; overflow: hidden; }
+17:       #terminal-container { height: 100%; width: 100%; padding: 4px; box-sizing: border-box; }
+18:       #error-log { color: red; font-family: monospace; position: absolute; top: 0; left: 0; z-index: 9999; pointer-events: none; }
+19:     </style>
+20:   </head>
+21:   <body>
+22:     <div id="error-log"></div>
+23:     <div id="terminal-container"></div>
+24:     <script>
+25:       let term;
+26:       
+27:       window.onerror = function(message, source, lineno, colno, error) {
+28:          document.getElementById('error-log').innerText += "\\n" + message;
+29:          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'JS_ERROR', payload: message }));
+30:       };
+31: 
+32:       const sendMessage = (msg) => {
+33:         window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+34:       };
+35: 
+36:       // We must wait for Xterm to load from CDN
+37:       const init = () => {
+38:         if (typeof Terminal === 'undefined') {
+39:            setTimeout(init, 100);
+40:            return;
+41:         }
+42: 
+43:         term = new Terminal({
+44:           theme: { background: '#000000' },
+45:           fontFamily: 'monospace',
+46:           fontSize: 14,
+47:           cursorBlink: true
+48:         });
+49:         
+50:         const fitAddon = new FitAddon.FitAddon();
+51:         term.loadAddon(fitAddon);
+52:         term.open(document.getElementById('terminal-container'));
+53:         
+54:         setTimeout(() => {
+55:           fitAddon.fit();
+56:           sendMessage({ type: 'READY' });
+57:         }, 150);
+58: 
+59:         window.addEventListener('resize', () => {
+60:           fitAddon.fit();
+61:         });
+62: 
+63:         // Disable standard autocorrect on terminal textareas
+64:         setTimeout(() => {
+65:           const textareas = document.querySelectorAll('textarea');
+66:           textareas.forEach(ta => {
+67:             ta.setAttribute('autocorrect', 'off');
+68:             ta.setAttribute('autocapitalize', 'none');
+69:             ta.setAttribute('spellcheck', 'false');
+70:             ta.setAttribute('autocomplete', 'off');
+71:           });
+72:         }, 500);
+73: 
+74:         term.onData(data => {
+75:           sendMessage({ type: 'DATA', payload: data });
+76:         });
+77:       };
+78: 
+79:       window.addEventListener('message', event => {
+80:          try {
+81:             const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+82:             if (msg.type === 'WRITE' && term) {
+83:                term.write(msg.payload);
+84:             }
+85:          } catch(e) {}
+86:       });
+87: 
+88:       window.onload = init;
+89:     </script>
+90:   </body>
+91: </html>
+92: `;
+93: 
+94: interface TerminalViewProps {
+95:   projectId?: string;
+96:   sessionId?: string;
+97: }
+98: 
+99: export const TerminalView = ({ projectId, sessionId = 'global-1' }: TerminalViewProps) => {
+100:   const webviewRef = useRef<WebView>(null);
+101:   const isStarted = useRef(false);
+102:   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+103: 
+104:   useEffect(() => {
+105:     const unsubscribe = NodeRunner.addListener((msg) => {
+106:       if ((msg.type === 'CMD_OUT' || msg.type === 'CMD_ERR') && msg.sessionId === sessionId) {
+107:         const safePayload = JSON.stringify(msg.payload);
+108:         const js = `window.postMessage(JSON.stringify({ type: 'WRITE', payload: ${safePayload} }), '*'); true;`;
+109:         webviewRef.current?.injectJavaScript(js);
+110:       }
+111:     });
+112: 
+113:     return () => {
+114:       unsubscribe();
+115:     };
+116:   }, [sessionId]);
+117: 
+118:   const onMessage = (event: any) => {
+119:     try {
+120:       const msg = JSON.parse(event.nativeEvent.data);
+121:       if (msg.type === 'READY') {
+122:         if (!isStarted.current) {
+123:           isStarted.current = true;
+124:           NodeRunner.init().then(() => {
+125:             const globalCwd = PROJECTS_ROOT.replace('file://', '');
+126:             NodeRunner.send({ 
+127:               type: 'SHELL_PTY_START', 
+128:               cwd: globalCwd, 
+129:               projectsRoot: globalCwd, 
+130:               projectName: 'DevFlux', 
+131:               sessionId: sessionId 
+132:             });
+133:           });
+134:         }
+135:       } else if (msg.type === 'DATA') {
+136:         NodeRunner.send({ type: 'SHELL_PTY_DATA', payload: msg.payload, sessionId: sessionId });
+137:       } else if (msg.type === 'JS_ERROR') {
+138:         setErrorMsg(msg.payload);
+139:         console.error("Terminal Webview JS Error:", msg.payload);
+140:       }
+141:     } catch(e) {
+142:       console.error(e);
+143:     }
+144:   };
+145: 
+146:   return (
+147:     <View style={styles.container}>
+148:       {errorMsg && (
+149:         <View style={styles.errorContainer}>
+150:            <Text style={styles.errorText}>WebView Error: {errorMsg}</Text>
+151:         </View>
+152:       )}
+153:       <WebView 
+154:         ref={webviewRef}
+155:         originWhitelist={['*']}
+156:         source={{ html: HTML_CONTENT, baseUrl: 'https://cdn.jsdelivr.net' }}
+157:         onMessage={onMessage}
+158:         style={{ flex: 1, backgroundColor: '#000000' }}
+159:         scrollEnabled={false}
+160:         bounces={false}
+161:         javaScriptEnabled={true}
+162:         domStorageEnabled={true}
+163:         keyboardDisplayRequiresUserAction={false}
+164:         hideKeyboardAccessoryView={true}
+165:         mixedContentMode="always"
+166:       />
+167:     </View>
+168:   );
+169: };
+170: 
+171: const styles = StyleSheet.create({
+172:   container: {
+173:     flex: 1,
+174:     backgroundColor: '#000000',
+175:   },
+176:   errorContainer: {
+177:     padding: 10,
+178:     backgroundColor: 'rgba(255,0,0,0.2)',
+179:   },
+180:   errorText: {
+181:     color: '#ff4444',
+182:     fontFamily: 'monospace',
+183:     fontSize: 12,
+184:   }
+185: });
+186: 
+The above content shows the entire, complete file contents of the requested file.
