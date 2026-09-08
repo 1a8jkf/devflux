@@ -4,31 +4,222 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = require("vscode");
 const ws_1 = require("ws");
-const os = require("os");
 const cp = require("child_process");
 let ws = null;
 let currentRoomCode = null;
 let statusBarItem;
 let fileSystemWatcher = null;
+let saveSubscription = null;
 let pingInterval = null;
-const RELAY_URL = 'ws://82.29.61.16:8080'; // TODO: Change to your VPS URL (e.g., wss://your-vps.com)
-// Get local IP address
-function getLocalIP() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+let manualStop = false;
+const RELAY_URL = 'ws://82.29.61.16:8080';
+const EXCLUDE_GLOB = '{**/node_modules/**,**/.git/**,**/.expo/**,**/.vscode/**,**/.next/**,**/.turbo/**,**/.cache/**,**/coverage/**,**/dist/**,**/build/**}';
+const MAX_TREE_FILES = 5000;
+const TREE_DEBOUNCE_MS = 650;
+let treeRefreshTimer = null;
+let treeInFlight = false;
+let treeQueued = false;
+let lastTreeSignature = '';
+const remoteShells = new Map();
+function getWorkspace() {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0)
+        return null;
+    const rootUri = workspaceFolders[0].uri;
+    const name = workspaceFolders[0].name || rootUri.fsPath.split(/[\\/]/).pop() || 'VS Code Workspace';
+    return { rootUri, name, rootPath: rootUri.fsPath };
+}
+function cleanSegments(value) {
+    return String(value || '')
+        .replace(/\\/g, '/')
+        .split('/')
+        .map(segment => segment.trim())
+        .filter(segment => !!segment && segment !== '.' && segment !== '..');
+}
+function cleanRelativePath(value) {
+    return cleanSegments(value).join('/');
+}
+function uriFromWorkspace(rootUri, relativePath) {
+    const segments = cleanSegments(relativePath);
+    if (segments.length === 0)
+        throw new Error('Invalid path');
+    return vscode.Uri.joinPath(rootUri, ...segments);
+}
+async function ensureParentDirectory(rootUri, relativePath) {
+    const segments = cleanSegments(relativePath);
+    if (segments.length <= 1)
+        return;
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(rootUri, ...segments.slice(0, -1)));
+}
+function send(payload) {
+    if (ws && ws.readyState === ws_1.WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+    }
+}
+function sendOperationResult(ok, message, error) {
+    send({ type: 'operation_result', ok, message, error });
+}
+async function sendTree(force = false) {
+    if (treeInFlight) {
+        treeQueued = true;
+        return;
+    }
+    const workspace = getWorkspace();
+    if (!workspace) {
+        send({ type: 'tree_data', paths: [], workspaceName: 'VS Code Workspace' });
+        vscode.window.showErrorMessage('DevFlux: No workspace folder open.');
+        return;
+    }
+    treeInFlight = true;
+    try {
+        const files = await vscode.workspace.findFiles('**/*', EXCLUDE_GLOB, MAX_TREE_FILES);
+        const paths = files
+            .map(file => vscode.workspace.asRelativePath(file, false).replace(/\\/g, '/'))
+            .sort((a, b) => a.localeCompare(b));
+        const signature = `${workspace.name}:${paths.join('\u0000')}`;
+        if (force || signature !== lastTreeSignature) {
+            lastTreeSignature = signature;
+            send({ type: 'tree_data', paths, workspaceName: workspace.name });
         }
     }
-    return '127.0.0.1';
+    catch (err) {
+        send({ type: 'tree_data', paths: [], workspaceName: workspace.name });
+    }
+    finally {
+        treeInFlight = false;
+        if (treeQueued) {
+            treeQueued = false;
+            queueTree();
+        }
+    }
+}
+function queueTree(delay = TREE_DEBOUNCE_MS) {
+    if (treeRefreshTimer) {
+        clearTimeout(treeRefreshTimer);
+    }
+    treeRefreshTimer = setTimeout(() => {
+        treeRefreshTimer = null;
+        void sendTree();
+    }, delay);
+}
+async function writeWorkspaceFile(relativePath, content) {
+    const workspace = getWorkspace();
+    if (!workspace)
+        return;
+    const cleanPath = cleanRelativePath(relativePath);
+    if (!cleanPath)
+        return;
+    const fileUri = uriFromWorkspace(workspace.rootUri, cleanPath);
+    await ensureParentDirectory(workspace.rootUri, cleanPath);
+    const openDocument = vscode.workspace.textDocuments.find(document => document.uri.toString() === fileUri.toString());
+    if (openDocument) {
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(fileUri, new vscode.Range(openDocument.positionAt(0), openDocument.positionAt(openDocument.getText().length)), content);
+        await vscode.workspace.applyEdit(edit);
+    }
+    else {
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(content, 'utf8'));
+    }
+}
+async function saveWorkspaceFile(relativePath) {
+    const workspace = getWorkspace();
+    if (!workspace)
+        return;
+    const cleanPath = cleanRelativePath(relativePath);
+    if (!cleanPath)
+        return;
+    const fileUri = uriFromWorkspace(workspace.rootUri, cleanPath);
+    await ensureParentDirectory(workspace.rootUri, cleanPath);
+    try {
+        await vscode.workspace.fs.stat(fileUri);
+    }
+    catch (e) {
+        await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
+    }
+    const document = await vscode.workspace.openTextDocument(fileUri);
+    await document.save();
+    vscode.window.setStatusBarMessage(`DevFlux: Saved ${cleanPath} to disk`, 3000);
+}
+function shellConfig() {
+    if (process.platform === 'win32') {
+        return { command: process.env.ComSpec || 'cmd.exe', args: [] };
+    }
+    return { command: process.env.SHELL || '/bin/sh', args: ['-i'] };
+}
+function stopRemoteShell(shellId) {
+    const child = remoteShells.get(shellId);
+    if (!child)
+        return;
+    remoteShells.delete(shellId);
+    try {
+        child.stdin.end();
+    }
+    catch (e) { }
+    try {
+        child.kill();
+    }
+    catch (e) { }
+}
+function stopAllRemoteShells() {
+    Array.from(remoteShells.keys()).forEach(stopRemoteShell);
+}
+function startRemoteShell(shellId, cols = 80, rows = 24) {
+    const workspace = getWorkspace();
+    if (!workspace) {
+        send({ type: 'shell_output', shellId, output: 'Error: No workspace folder open in VS Code.\r\n' });
+        send({ type: 'shell_exit', shellId, code: 1 });
+        return;
+    }
+    if (remoteShells.has(shellId)) {
+        send({ type: 'shell_output', shellId, output: '' });
+        return;
+    }
+    const config = shellConfig();
+    const child = cp.spawn(config.command, config.args, {
+        cwd: workspace.rootPath,
+        env: {
+            ...process.env,
+            TERM: process.env.TERM || 'xterm-256color',
+            COLORTERM: process.env.COLORTERM || 'truecolor',
+            COLUMNS: String(cols),
+            LINES: String(rows),
+        },
+        windowsHide: true,
+        shell: false,
+    });
+    remoteShells.set(shellId, child);
+    send({ type: 'shell_output', shellId, output: `DevFlux PC shell: ${workspace.rootPath}\r\n` });
+    child.stdout.on('data', chunk => send({ type: 'shell_output', shellId, output: chunk.toString() }));
+    child.stderr.on('data', chunk => send({ type: 'shell_output', shellId, output: chunk.toString() }));
+    child.on('error', err => {
+        send({ type: 'shell_output', shellId, output: `Failed to start shell: ${err.message}\r\n` });
+    });
+    child.on('close', code => {
+        remoteShells.delete(shellId);
+        send({ type: 'shell_exit', shellId, code });
+    });
+}
+function writeRemoteShell(shellId, payload) {
+    const child = remoteShells.get(shellId);
+    if (!child || child.killed) {
+        startRemoteShell(shellId);
+        setTimeout(() => writeRemoteShell(shellId, payload), 120);
+        return;
+    }
+    try {
+        child.stdin.write(payload);
+    }
+    catch (err) {
+        send({ type: 'shell_output', shellId, output: `Shell input failed: ${err.message}\r\n` });
+    }
 }
 function updateStatusBar(connected) {
     if (!statusBarItem)
         return;
     if (ws && currentRoomCode) {
-        statusBarItem.text = `$(sync) DevFlex: Room ${currentRoomCode}`;
+        statusBarItem.text = `$(sync) DevFlux: Room ${currentRoomCode}`;
         statusBarItem.backgroundColor = connected ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
         statusBarItem.tooltip = `Connected to Relay: ${RELAY_URL}`;
         statusBarItem.show();
@@ -37,181 +228,202 @@ function updateStatusBar(connected) {
         statusBarItem.hide();
     }
 }
-function startServer(context) {
+function scheduleServerReconnect(context) {
+    if (manualStop || reconnectTimer || !currentRoomCode)
+        return;
+    const delay = Math.min(10000, 1000 * Math.pow(2, reconnectAttempts));
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        startServer(context, true);
+    }, delay);
+}
+function startServer(context, isReconnect = false) {
     if (ws) {
-        vscode.window.showInformationMessage(`DevFlex Sync is already running. Room Code: ${currentRoomCode}`);
+        if (isReconnect)
+            return;
+        vscode.window.showInformationMessage(`DevFlux Sync is already running. Room Code: ${currentRoomCode}`);
         return;
     }
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let token = '';
-    for (let i = 0; i < 8; i++) {
-        token += chars.charAt(Math.floor(Math.random() * chars.length));
+    manualStop = false;
+    if (!currentRoomCode) {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let token = '';
+        for (let i = 0; i < 8; i++) {
+            token += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        currentRoomCode = token.slice(0, 4) + '-' + token.slice(4, 8);
     }
-    // format as XXXX-XXXX for readability
-    currentRoomCode = token.slice(0, 4) + '-' + token.slice(4, 8);
-    vscode.window.setStatusBarMessage(`DevFlex: Connecting to Relay...`, 3000);
+    if (!isReconnect) {
+        reconnectAttempts = 0;
+        vscode.window.setStatusBarMessage('DevFlux: Connecting to Relay...', 3000);
+    }
     try {
         ws = new ws_1.WebSocket(RELAY_URL);
         ws.on('open', () => {
-            if (ws) {
-                ws?.send(JSON.stringify({ type: 'join', role: 'pc', roomId: currentRoomCode }));
-                updateStatusBar(false);
-                vscode.window.showInformationMessage(`DevFlex Sync Started! Enter Code in App: ${currentRoomCode}`, 'Copy Code').then(selection => {
+            if (!ws)
+                return;
+            reconnectAttempts = 0;
+            lastTreeSignature = '';
+            send({ type: 'join', role: 'pc', roomId: currentRoomCode });
+            updateStatusBar(false);
+            if (!isReconnect) {
+                vscode.window.showInformationMessage(`DevFlux Sync Started. Enter Code in App: ${currentRoomCode}`, 'Copy Code').then(selection => {
                     if (selection === 'Copy Code' && currentRoomCode) {
                         vscode.env.clipboard.writeText(currentRoomCode);
                     }
                 });
-                pingInterval = setInterval(() => {
-                    if (ws && ws.readyState === ws_1.WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'ping' }));
-                    }
-                }, 15000);
             }
+            else {
+                vscode.window.setStatusBarMessage('DevFlux: Live Sync reconnected.', 3000);
+            }
+            pingInterval = setInterval(() => {
+                send({ type: 'ping' });
+            }, 15000);
         });
         ws.on('close', () => {
-            stopServer();
-            vscode.window.showWarningMessage('DevFlex Sync: Disconnected from Relay Server.');
+            ws = null;
+            updateStatusBar(false);
+            if (pingInterval) {
+                clearInterval(pingInterval);
+                pingInterval = null;
+            }
+            stopAllRemoteShells();
+            if (!manualStop) {
+                vscode.window.showWarningMessage('DevFlux Sync: Disconnected from Relay Server. Reconnecting...');
+                scheduleServerReconnect(context);
+            }
         });
         ws.on('error', (err) => {
             console.error('WebSocket error:', err);
-            vscode.window.showErrorMessage(`DevFlex Sync Error: Could not connect to relay at ${RELAY_URL}`);
-            stopServer();
+            if (!manualStop) {
+                vscode.window.setStatusBarMessage('DevFlux: Relay connection error. Retrying...', 3000);
+            }
         });
         ws.on('message', async (message) => {
             if (!ws)
                 return;
             try {
                 const data = JSON.parse(message);
+                const workspace = getWorkspace();
                 if (data.type === 'relay_app_connected') {
                     updateStatusBar(true);
-                    vscode.window.showInformationMessage(`📱 DevFlex App joined Room ${currentRoomCode}!`);
+                    vscode.window.showInformationMessage(`DevFlux App joined Room ${currentRoomCode}.`);
+                    void sendTree(true);
                     return;
                 }
                 if (data.type === 'relay_peer_disconnected') {
                     updateStatusBar(false);
-                    vscode.window.showWarningMessage(`📱 DevFlex App disconnected from Room.`);
+                    vscode.window.showWarningMessage('DevFlux App disconnected from Room.');
                     return;
                 }
                 if (data.type === 'file_update' && data.path && data.content !== undefined) {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders)
-                        return;
-                    const rootUri = workspaceFolders[0].uri;
-                    const segments = data.path.split(/[\\/]/);
-                    const fileUri = vscode.Uri.joinPath(rootUri, ...segments);
-                    try {
-                        try {
-                            await vscode.workspace.fs.stat(fileUri);
-                        }
-                        catch (e) {
-                            // File doesn't exist, create it
-                            await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
-                        }
-                        const document = await vscode.workspace.openTextDocument(fileUri);
-                        const edit = new vscode.WorkspaceEdit();
-                        const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
-                        edit.replace(fileUri, fullRange, data.content);
-                        await vscode.workspace.applyEdit(edit);
-                    }
-                    catch (e) {
-                        console.error(e);
-                    }
+                    await writeWorkspaceFile(data.path, data.content);
+                    return;
+                }
+                if (data.type === 'shell_start' && data.shellId) {
+                    startRemoteShell(String(data.shellId), Number(data.cols) || 80, Number(data.rows) || 24);
+                    return;
+                }
+                if (data.type === 'shell_input' && data.shellId) {
+                    writeRemoteShell(String(data.shellId), String(data.payload || ''));
+                    return;
+                }
+                if (data.type === 'shell_resize' && data.shellId) {
+                    // Pipes do not expose a PTY resize API; keep the message harmless.
+                    return;
+                }
+                if (data.type === 'shell_stop' && data.shellId) {
+                    stopRemoteShell(String(data.shellId));
+                    return;
                 }
                 if (data.type === 'save_file' && data.path) {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders)
-                        return;
-                    const rootUri = workspaceFolders[0].uri;
-                    const segments = data.path.split(/[\\/]/);
-                    const fileUri = vscode.Uri.joinPath(rootUri, ...segments);
-                    try {
-                        try {
-                            await vscode.workspace.fs.stat(fileUri);
-                        }
-                        catch (e) {
-                            await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
-                        }
-                        const document = await vscode.workspace.openTextDocument(fileUri);
-                        await document.save();
-                        vscode.window.setStatusBarMessage(`DevFlex: Saved ${data.path} to disk`, 3000);
-                    }
-                    catch (e) {
-                        console.error(e);
-                    }
+                    await saveWorkspaceFile(data.path);
+                    queueTree(0);
+                    return;
                 }
                 if (data.type === 'request_tree') {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders) {
-                        ws?.send(JSON.stringify({ type: 'tree_data', paths: [] }));
-                        vscode.window.showErrorMessage('DevFlex: No workspace folder open.');
-                        return;
-                    }
-                    try {
-                        vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/.expo/**,**/.vscode/**}')
-                            .then(files => {
-                            const paths = files.map(f => vscode.workspace.asRelativePath(f, false).replace(/\\/g, '/'));
-                            ws?.send(JSON.stringify({ type: 'tree_data', paths }));
-                        }, err => {
-                            ws?.send(JSON.stringify({ type: 'tree_data', paths: [] }));
-                        });
-                    }
-                    catch (e) {
-                        ws?.send(JSON.stringify({ type: 'tree_data', paths: [] }));
-                    }
+                    await sendTree(true);
+                    return;
                 }
                 if (data.type === 'request_full_sync') {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders)
+                    if (!workspace)
                         return;
-                    vscode.window.setStatusBarMessage('DevFlex: Syncing full workspace to mobile...', 3000);
-                    vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/.expo/**,**/.vscode/**}').then(files => {
-                        files.forEach(async (f) => {
-                            try {
-                                const relPath = vscode.workspace.asRelativePath(f, false).replace(/\\/g, '/');
-                                const doc = await vscode.workspace.fs.readFile(f);
-                                const content = Buffer.from(doc).toString('utf8');
-                                ws?.send(JSON.stringify({
-                                    type: 'file_update',
-                                    path: relPath,
-                                    content
-                                }));
-                            }
-                            catch (err) { }
-                        });
-                    });
+                    vscode.window.setStatusBarMessage('DevFlux: Syncing full workspace to mobile...', 3000);
+                    const files = await vscode.workspace.findFiles('**/*', EXCLUDE_GLOB);
+                    for (const file of files) {
+                        try {
+                            const relPath = vscode.workspace.asRelativePath(file, false).replace(/\\/g, '/');
+                            const doc = await vscode.workspace.fs.readFile(file);
+                            const content = Buffer.from(doc).toString('utf8');
+                            send({ type: 'file_update', path: relPath, content, workspaceName: workspace.name });
+                        }
+                        catch (err) { }
+                    }
+                    await sendTree(true);
+                    return;
                 }
                 if (data.type === 'request_file' && data.path) {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders)
+                    if (!workspace)
                         return;
-                    const rootUri = workspaceFolders[0].uri;
-                    const segments = data.path.split(/[\\/]/).filter((s) => s);
-                    const fileUri = vscode.Uri.joinPath(rootUri, ...segments);
+                    const cleanPath = cleanRelativePath(data.path);
+                    const fileUri = uriFromWorkspace(workspace.rootUri, cleanPath);
                     try {
-                        try {
-                            await vscode.workspace.fs.stat(fileUri);
-                        }
-                        catch (e) {
-                            await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
-                        }
-                        // Automatically open the file in VS Code so the user can watch the live coding!
                         const document = await vscode.workspace.openTextDocument(fileUri);
                         vscode.window.showTextDocument(document, { preserveFocus: true, preview: false });
-                        const content = document.getText();
-                        ws?.send(JSON.stringify({
-                            type: 'file_content',
-                            path: data.path,
-                            content
-                        }));
-                        vscode.window.showInformationMessage(`DevFlex: Arquivo ${data.path} enviado para o App (${content.length} bytes)`);
+                        send({ type: 'file_content', path: cleanPath, content: document.getText(), workspaceName: workspace.name });
                     }
                     catch (err) {
-                        vscode.window.showErrorMessage(`DevFlex: Falha ao ler arquivo ${data.path} - ${err.message}`);
+                        vscode.window.showErrorMessage(`DevFlux: Failed to read ${cleanPath} - ${err.message}`);
                     }
+                    return;
+                }
+                if (data.type === 'delete_path' && data.path) {
+                    if (!workspace)
+                        return;
+                    const cleanPath = cleanRelativePath(data.path);
+                    try {
+                        await vscode.workspace.fs.delete(uriFromWorkspace(workspace.rootUri, cleanPath), { recursive: true, useTrash: false });
+                        sendOperationResult(true, `Deleted ${cleanPath}`);
+                        queueTree(0);
+                    }
+                    catch (err) {
+                        sendOperationResult(false, `Failed to delete ${cleanPath}`, err.message);
+                    }
+                    return;
+                }
+                if (data.type === 'move_path' && data.fromPath && data.toPath) {
+                    if (!workspace)
+                        return;
+                    const cleanFrom = cleanRelativePath(data.fromPath);
+                    const cleanTo = cleanRelativePath(data.toPath);
+                    try {
+                        await ensureParentDirectory(workspace.rootUri, cleanTo);
+                        await vscode.workspace.fs.rename(uriFromWorkspace(workspace.rootUri, cleanFrom), uriFromWorkspace(workspace.rootUri, cleanTo), { overwrite: false });
+                        sendOperationResult(true, `Moved ${cleanFrom} to ${cleanTo}`);
+                        queueTree(0);
+                    }
+                    catch (err) {
+                        sendOperationResult(false, `Failed to move ${cleanFrom}`, err.message);
+                    }
+                    return;
+                }
+                if (data.type === 'create_directory' && data.path) {
+                    if (!workspace)
+                        return;
+                    const cleanPath = cleanRelativePath(data.path);
+                    try {
+                        await vscode.workspace.fs.createDirectory(uriFromWorkspace(workspace.rootUri, cleanPath));
+                        sendOperationResult(true, `Created folder ${cleanPath}`);
+                        queueTree(0);
+                    }
+                    catch (err) {
+                        sendOperationResult(false, `Failed to create folder ${cleanPath}`, err.message);
+                    }
+                    return;
                 }
                 if (data.type === 'search_workspace' && data.query) {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders)
+                    if (!workspace)
                         return;
                     try {
                         const files = await vscode.workspace.findFiles('**/*', '{**/node_modules/**,**/.git/**,**/.expo/**,**/.vscode/**,**/*.png,**/*.jpg}');
@@ -219,8 +431,8 @@ function startServer(context) {
                         for (const file of files) {
                             const relPath = vscode.workspace.asRelativePath(file, false).replace(/\\/g, '/');
                             try {
-                                const doc = await vscode.workspace.openTextDocument(file);
-                                const text = doc.getText();
+                                const document = await vscode.workspace.openTextDocument(file);
+                                const text = document.getText();
                                 if (text.toLowerCase().includes(data.query.toLowerCase())) {
                                     const lines = text.split('\n');
                                     const matches = [];
@@ -231,111 +443,89 @@ function startServer(context) {
                                                 break;
                                         }
                                     }
-                                    results.push({
-                                        path: relPath,
-                                        name: relPath.split('/').pop(),
-                                        matches
-                                    });
+                                    results.push({ path: relPath, name: relPath.split('/').pop(), matches });
                                 }
                             }
                             catch (e) { }
                         }
-                        ws?.send(JSON.stringify({
-                            type: 'search_results',
-                            query: data.query,
-                            results
-                        }));
+                        send({ type: 'search_results', query: data.query, results });
                     }
                     catch (e) { }
+                    return;
                 }
                 if (data.type === 'exec_command' && data.command) {
-                    const workspaceFolders = vscode.workspace.workspaceFolders;
-                    if (!workspaceFolders) {
-                        ws?.send(JSON.stringify({ type: 'command_output', output: 'Error: No workspace folder open in VS Code.\n' }));
-                        ws?.send(JSON.stringify({ type: 'command_exit', code: 1 }));
+                    if (!workspace) {
+                        send({ type: 'command_output', output: 'Error: No workspace folder open in VS Code.\n' });
+                        send({ type: 'command_exit', code: 1 });
                         return;
                     }
-                    const rootPath = workspaceFolders[0].uri.fsPath;
                     const cmdId = data.cmdId || Math.random().toString(36).substring(7);
                     try {
-                        const shell = os.platform() === 'win32' ? 'powershell.exe' : '/bin/bash';
                         const child = cp.spawn(data.command, data.args || [], {
-                            cwd: rootPath,
+                            cwd: workspace.rootPath,
                             shell: true
                         });
                         child.stdout.on('data', (chunk) => {
-                            ws?.send(JSON.stringify({
-                                type: 'command_output',
-                                cmdId,
-                                output: chunk.toString()
-                            }));
+                            send({ type: 'command_output', cmdId, output: chunk.toString() });
                         });
                         child.stderr.on('data', (chunk) => {
-                            ws?.send(JSON.stringify({
-                                type: 'command_output',
-                                cmdId,
-                                output: chunk.toString()
-                            }));
+                            send({ type: 'command_output', cmdId, output: chunk.toString() });
                         });
                         child.on('close', (code) => {
-                            ws?.send(JSON.stringify({
-                                type: 'command_exit',
-                                cmdId,
-                                code
-                            }));
+                            send({ type: 'command_exit', cmdId, code });
                         });
                         child.on('error', (err) => {
-                            ws?.send(JSON.stringify({
-                                type: 'command_output',
-                                cmdId,
-                                output: `Failed to start process: ${err.message}\n`
-                            }));
+                            send({ type: 'command_output', cmdId, output: `Failed to start process: ${err.message}\n` });
                         });
                     }
                     catch (err) {
-                        ws?.send(JSON.stringify({
-                            type: 'command_output',
-                            cmdId,
-                            output: `Error executing command: ${err.message}\n`
-                        }));
+                        send({ type: 'command_output', cmdId, output: `Error executing command: ${err.message}\n` });
                     }
                 }
             }
             catch (e) {
-                // Ignore parsing errors
+                // Ignore parsing errors.
             }
         });
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (workspaceFolders) {
-            // Watch all files in workspace
+        const workspace = getWorkspace();
+        if (workspace) {
             fileSystemWatcher = vscode.workspace.createFileSystemWatcher('**/*');
-            // We listen to the vscode.workspace.onDidSaveTextDocument to get the actual text contents
-            // It's more reliable for text files than the raw filesystem watcher
-            const saveSubscription = vscode.workspace.onDidSaveTextDocument((document) => {
+            context.subscriptions.push(fileSystemWatcher);
+            context.subscriptions.push(fileSystemWatcher.onDidCreate(() => queueTree()));
+            context.subscriptions.push(fileSystemWatcher.onDidDelete(() => queueTree()));
+            context.subscriptions.push(fileSystemWatcher.onDidChange(() => queueTree()));
+            const subscription = vscode.workspace.onDidSaveTextDocument((document) => {
                 if (!ws || ws.readyState !== ws_1.WebSocket.OPEN)
                     return;
+                const workspace = getWorkspace();
+                if (!workspace || !document.uri.fsPath.startsWith(workspace.rootPath))
+                    return;
                 const relativePath = vscode.workspace.asRelativePath(document.uri, false).replace(/\\/g, '/');
-                const payload = JSON.stringify({
-                    type: 'file_update',
-                    path: relativePath,
-                    content: document.getText()
-                });
-                ws?.send(payload);
+                send({ type: 'file_update', path: relativePath, content: document.getText(), workspaceName: workspace.name });
             });
-            context.subscriptions.push(saveSubscription);
+            saveSubscription = subscription;
+            context.subscriptions.push(subscription);
         }
         updateStatusBar(false);
     }
     catch (e) {
-        vscode.window.showErrorMessage(`Failed to start DevFlex Sync: ${e.message}`);
+        vscode.window.showErrorMessage(`Failed to start DevFlux Sync: ${e.message}`);
     }
 }
 function stopServer() {
+    manualStop = true;
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    stopAllRemoteShells();
     if (ws) {
-        ws.close();
+        const activeSocket = ws;
         ws = null;
+        activeSocket.close();
     }
     currentRoomCode = null;
+    reconnectAttempts = 0;
     if (fileSystemWatcher) {
         fileSystemWatcher.dispose();
         fileSystemWatcher = null;
@@ -344,15 +534,26 @@ function stopServer() {
         clearInterval(pingInterval);
         pingInterval = null;
     }
+    if (treeRefreshTimer) {
+        clearTimeout(treeRefreshTimer);
+        treeRefreshTimer = null;
+    }
+    treeInFlight = false;
+    treeQueued = false;
+    lastTreeSignature = '';
+    if (saveSubscription) {
+        saveSubscription.dispose();
+        saveSubscription = null;
+    }
     updateStatusBar(false);
-    vscode.window.showInformationMessage('DevFlex Live Sync stopped.');
+    vscode.window.showInformationMessage('DevFlux Live Sync stopped.');
 }
 function activate(context) {
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.command = 'devflex-sync.stopServer';
+    statusBarItem.command = 'devflux-sync.stopServer';
     context.subscriptions.push(statusBarItem);
-    const startCmd = vscode.commands.registerCommand('devflex-sync.startServer', () => startServer(context));
-    const stopCmd = vscode.commands.registerCommand('devflex-sync.stopServer', () => stopServer());
+    const startCmd = vscode.commands.registerCommand('devflux-sync.startServer', () => startServer(context));
+    const stopCmd = vscode.commands.registerCommand('devflux-sync.stopServer', () => stopServer());
     context.subscriptions.push(startCmd, stopCmd);
 }
 function deactivate() {

@@ -4,10 +4,12 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { GithubService } from '../../services/GithubService';
 import { Icon } from '../../components/Icon';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function IssuesScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   
   const [issues, setIssues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,7 +54,7 @@ export default function IssuesScreen() {
             <Text style={[styles.cardDate, {marginLeft: 4}]}>{item.comments}</Text>
           </View>
           <Text style={styles.cardDate}>
-            Atualizado em {new Date(item.updated_at).toLocaleDateString()}
+            {t('Atualizado em')} {new Date(item.updated_at).toLocaleDateString()}
           </Text>
         </View>
       </TouchableOpacity>
@@ -68,7 +70,7 @@ export default function IssuesScreen() {
       ) : issues.length === 0 ? (
         <View style={styles.center}>
           <Icon name="CheckCircle" size={48} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Nenhuma Issue pendente.</Text>
+          <Text style={styles.emptyText}>{t('Nenhuma Issue pendente.')}</Text>
         </View>
       ) : (
         <FlatList

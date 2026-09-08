@@ -1,7 +1,9 @@
 const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { Client } = require('pg');
-
 const PORT = process.env.PORT || 8080;
 
 // Helper para CORS e JSON response
@@ -85,6 +87,162 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+
+  // Cloud Backup Endpoints
+
+  // Helper to verify GitHub token and get username
+  const verifyGitHubToken = (token) => {
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.github.com',
+        path: '/user',
+        method: 'GET',
+        headers: {
+          'Authorization': `token ${token}`,
+          'User-Agent': 'DevFlux-Relay'
+        }
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              const user = JSON.parse(data);
+              resolve(user.login);
+            } catch (e) {
+              reject(new Error('Invalid JSON from GitHub'));
+            }
+          } else {
+            reject(new Error(`GitHub API error: ${res.statusCode}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  };
+
+  const getBackupDir = (username) => {
+    const dir = path.join(__dirname, 'backups', username);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  };
+
+  // POST /api/backup/upload
+  if (req.method === 'POST' && req.url === '/api/backup/upload') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const { token, projectId, projectName, files } = data;
+
+        if (!token || !projectId || !files) {
+          return sendJson(res, 400, { error: 'Missing required parameters.' });
+        }
+
+        const username = await verifyGitHubToken(token);
+        const userDir = getBackupDir(username);
+        
+        const backupData = {
+          id: projectId,
+          name: projectName || projectId,
+          timestamp: new Date().toISOString(),
+          size: Buffer.byteLength(body, 'utf8'),
+          files: files
+        };
+
+        const filePath = path.join(userDir, `${projectId}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(backupData, null, 2), 'utf8');
+
+        return sendJson(res, 200, { success: true, message: 'Backup saved successfully' });
+      } catch (err) {
+        console.error('❌ [Backup Upload Error]:', err.message);
+        return sendJson(res, err.message.includes('GitHub') ? 401 : 500, { error: err.message });
+      }
+    });
+    return;
+  }
+
+  // GET /api/backup/list
+  if (req.method === 'GET' && req.url.startsWith('/api/backup/list')) {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get('token');
+      
+      if (!token) {
+        return sendJson(res, 400, { error: 'Missing GitHub token.' });
+      }
+
+      const username = await verifyGitHubToken(token);
+      const userDir = getBackupDir(username);
+      
+      const backups = [];
+      if (fs.existsSync(userDir)) {
+        const files = fs.readdirSync(userDir);
+        for (const file of files) {
+          if (file.endsWith('.json')) {
+            try {
+              const filePath = path.join(userDir, file);
+              const stats = fs.statSync(filePath);
+              const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              backups.push({
+                id: content.id,
+                name: content.name,
+                timestamp: content.timestamp,
+                size: content.size
+              });
+            } catch (e) {
+              console.warn(`Failed to read backup file ${file}`, e);
+            }
+          }
+        }
+      }
+
+      // Sort by timestamp descending
+      backups.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      return sendJson(res, 200, { backups });
+    } catch (err) {
+      console.error('❌ [Backup List Error]:', err.message);
+      return sendJson(res, err.message.includes('GitHub') ? 401 : 500, { error: err.message });
+    }
+  }
+
+  // POST /api/backup/download
+  if (req.method === 'POST' && req.url === '/api/backup/download') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const { token, projectId } = data;
+
+        if (!token || !projectId) {
+          return sendJson(res, 400, { error: 'Missing required parameters.' });
+        }
+
+        const username = await verifyGitHubToken(token);
+        const userDir = getBackupDir(username);
+        const filePath = path.join(userDir, `${projectId}.json`);
+
+        if (!fs.existsSync(filePath)) {
+          return sendJson(res, 404, { error: 'Backup not found.' });
+        }
+
+        const backupData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return sendJson(res, 200, backupData);
+      } catch (err) {
+        console.error('❌ [Backup Download Error]:', err.message);
+        return sendJson(res, err.message.includes('GitHub') ? 401 : 500, { error: err.message });
+      }
+    });
+    return;
+  }
+
 
   // Default 404 for other HTTP requests
   res.writeHead(404, { 'Content-Type': 'text/plain' });

@@ -7,6 +7,7 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { Icon } from '../../components/Icon';
 import { DatabaseService } from '../../services/DatabaseService';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 interface DBConnection {
   id: string;
@@ -26,6 +27,7 @@ export default function DatabaseConnectionsScreen() {
   const styles = getStyles(theme);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
 
   const [connections, setConnections] = useState<DBConnection[]>([]);
   const [isAdding, setIsAdding] = useState(false);
@@ -53,7 +55,7 @@ export default function DatabaseConnectionsScreen() {
 
   const testConnection = async () => {
     if (!host || !port || !user || !password || !dbName) {
-      Alert.alert('Erro', 'Por favor, preencha todos os campos para testar a conexão.');
+      Alert.alert(t('Erro'), t('Por favor, preencha todos os campos para testar a conexão.'));
       return;
     }
 
@@ -70,9 +72,9 @@ export default function DatabaseConnectionsScreen() {
         database: dbName,
         useRelay
       }, 'SELECT 1');
-      Alert.alert('Sucesso', 'Conexão estabelecida com sucesso via ' + (useRelay ? 'DevFlux Cloud Relay!' : 'Conexão Direta!'));
+      Alert.alert(t('Sucesso'), `${t('Conexão estabelecida com sucesso via')} ${useRelay ? 'DevFlux Cloud Relay!' : t('Conexão Direta!')}`);
     } catch (err: any) {
-      Alert.alert('Falha na Conexão', err.message);
+      Alert.alert(t('Falha na Conexão'), err.message);
     } finally {
       setIsTesting(false);
     }
@@ -80,7 +82,7 @@ export default function DatabaseConnectionsScreen() {
 
   const handleAdd = async () => {
     if (!name || !host || !port || !user || !password || !dbName) {
-      Alert.alert('Erro', 'Por favor, preencha todos os campos para salvar a conexão.');
+      Alert.alert(t('Erro'), t('Por favor, preencha todos os campos para salvar a conexão.'));
       return;
     }
     const cleanHost = host.replace(/^(https?:\/\/|postgres:\/\/|\/\/)/, '').split('/')[0].trim();
@@ -119,71 +121,60 @@ export default function DatabaseConnectionsScreen() {
       style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <Image 
-          source={require('../../../assets/top-bar-icon.png')} 
-          style={{ width: 32, height: 32, resizeMode: 'contain', marginRight: 12 }} 
-        />
-        <View>
-          <Text style={styles.title}>Conexões do Banco</Text>
-        </View>
-      </View>
+
 
       <ScrollView style={styles.content}>
         {isAdding ? (
           <View style={styles.formContainer}>
-            <Text style={styles.sectionTitle}>Nova Conexão PostgreSQL</Text>
+            <Text style={styles.sectionTitle}>{t('Nova Conexão PostgreSQL')}</Text>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Nome da Conexão</Text>
-              <TextInput style={styles.input} placeholder="Ex: Produção DB" placeholderTextColor={theme.colors.textSecondary} value={name} onChangeText={setName} />
+              <Text style={styles.label}>{t('Nome da Conexão')}</Text>
+              <TextInput style={styles.input} placeholder={t('Ex: Produção DB')} placeholderTextColor={theme.colors.textSecondary} value={name} onChangeText={setName} />
             </View>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Host</Text>
-              <TextInput style={styles.input} placeholder="Ex: localhost ou meu-banco.com" placeholderTextColor={theme.colors.textSecondary} value={host} onChangeText={setHost} autoCapitalize="none" />
+              <TextInput style={styles.input} placeholder={t('Ex: localhost ou meu-banco.com')} placeholderTextColor={theme.colors.textSecondary} value={host} onChangeText={setHost} autoCapitalize="none" />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Porta</Text>
+              <Text style={styles.label}>{t('Porta')}</Text>
               <TextInput style={styles.input} placeholder="Ex: 5432" placeholderTextColor={theme.colors.textSecondary} value={port} onChangeText={setPort} keyboardType="numeric" />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Usuário</Text>
+              <Text style={styles.label}>{t('Usuário')}</Text>
               <TextInput style={styles.input} placeholder="postgres" placeholderTextColor={theme.colors.textSecondary} value={user} onChangeText={setUser} autoCapitalize="none" />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Senha</Text>
-              <TextInput style={styles.input} placeholder="sua senha" placeholderTextColor={theme.colors.textSecondary} value={password} onChangeText={setPassword} secureTextEntry />
+              <Text style={styles.label}>{t('Senha')}</Text>
+              <TextInput style={styles.input} placeholder={t('sua senha')} placeholderTextColor={theme.colors.textSecondary} value={password} onChangeText={setPassword} secureTextEntry />
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Nome do Banco de Dados</Text>
+              <Text style={styles.label}>{t('Nome do Banco de Dados')}</Text>
               <TextInput style={styles.input} placeholder="meu_banco" placeholderTextColor={theme.colors.textSecondary} value={dbName} onChangeText={setDbName} autoCapitalize="none" />
             </View>
 
             <View style={styles.relayToggle}>
               <View style={styles.relayToggleText}>
-                <Text style={styles.relayTitle}>☁️ DevFlux Cloud Relay (Ativo)</Text>
-                <Text style={styles.relaySub}>Conexão roteada exclusivamente via nuvem de alta velocidade no servidor VPS sem bloqueios.</Text>
+                <Text style={styles.relayTitle}>☁️ {t('DevFlux Cloud Relay (Ativo)')}</Text>
+                <Text style={styles.relaySub}>{t('Conexão roteada exclusivamente via nuvem de alta velocidade no servidor VPS sem bloqueios.')}</Text>
               </View>
               <Icon name="Cloud" size={22} color={theme.colors.accentBlue} />
             </View>
 
             <View style={styles.formActions}>
               <TouchableOpacity style={styles.btnCancel} onPress={() => setIsAdding(false)}>
-                <Text style={styles.btnCancelText}>Cancelar</Text>
+                <Text style={styles.btnCancelText}>{t('Cancelar')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnTest} onPress={testConnection} disabled={isTesting}>
-                {isTesting ? <ActivityIndicator size="small" color={theme.colors.accentBlue} /> : <Text style={styles.btnTestText}>Testar</Text>}
+                {isTesting ? <ActivityIndicator size="small" color={theme.colors.accentBlue} /> : <Text style={styles.btnTestText}>{t('Testar')}</Text>}
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnSave} onPress={handleAdd}>
-                <Text style={styles.btnSaveText}>Salvar</Text>
+                <Text style={styles.btnSaveText}>{t('Salvar')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -191,15 +182,15 @@ export default function DatabaseConnectionsScreen() {
           <View>
             <TouchableOpacity style={styles.addBtn} onPress={() => setIsAdding(true)}>
               <Icon name="PlusCircle" size={20} color="#FFF" style={{ marginRight: 8 }} />
-              <Text style={styles.addBtnText}>Adicionar Servidor</Text>
+              <Text style={styles.addBtnText}>{t('Adicionar Servidor')}</Text>
             </TouchableOpacity>
 
-            <Text style={styles.sectionTitle}>Servidores Salvos</Text>
+            <Text style={styles.sectionTitle}>{t('Servidores Salvos')}</Text>
             
             {connections.length === 0 ? (
               <View style={styles.emptyState}>
                 <Icon name="Database" size={48} color={theme.colors.border} />
-                <Text style={styles.emptyText}>Nenhuma conexão salva ainda.</Text>
+                <Text style={styles.emptyText}>{t('Nenhuma conexão salva ainda.')}</Text>
               </View>
             ) : (
               connections.map(conn => (

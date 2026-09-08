@@ -15,6 +15,13 @@ config.resolver.extraNodeModules = {
   dns: require.resolve('./src/polyfills/dns.js'),
   buffer: require.resolve('buffer'),
   crypto: require.resolve('./src/polyfills/crypto.js'), // Full crypto polyfill for pg
+  assert: require.resolve('./src/polyfills/assert.js'),
+  http: require.resolve('./src/polyfills/empty.js'),
+  https: require.resolve('./src/polyfills/empty.js'),
+  zlib: require.resolve('./src/polyfills/empty.js'),
+  os: require.resolve('./src/polyfills/empty.js'),
+  url: require.resolve('./src/polyfills/empty.js'),
+  child_process: require.resolve('./src/polyfills/empty.js'),
 };
 
 module.exports = config;

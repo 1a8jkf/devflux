@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Language, translations, getTranslation } from '../i18n';
 
 const LANGUAGE_STORAGE_KEY = '@devflux_language';
+const DEFAULT_LANGUAGE: Language = 'en';
 
 interface LanguageContextProps {
   language: Language;
@@ -11,13 +12,13 @@ interface LanguageContextProps {
 }
 
 const LanguageContext = createContext<LanguageContextProps>({
-  language: 'pt',
+  language: DEFAULT_LANGUAGE,
   setLanguage: async () => {},
   t: (key: string, fallback?: string) => fallback || key,
 });
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [language, setLanguageState] = useState<Language>('pt');
+  const [language, setLanguageState] = useState<Language>(DEFAULT_LANGUAGE);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -26,6 +27,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const stored = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
         if (stored && ['pt', 'en', 'es'].includes(stored)) {
           setLanguageState(stored as Language);
+        } else {
+          await AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
         }
       } catch (e) {
         console.error('Failed to load language', e);
@@ -46,11 +49,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const t = (key: string, fallback?: string) => {
-    const dict = translations[language] || translations['pt'];
+    const dict = translations[language] || translations[DEFAULT_LANGUAGE];
     let text = getTranslation(dict, key);
     
-    if (text === key && language !== 'pt') {
-      text = getTranslation(translations['pt'], key);
+    if (text === key && language !== DEFAULT_LANGUAGE) {
+      text = getTranslation(translations[DEFAULT_LANGUAGE], key);
     }
     
     if (text === key && fallback) {

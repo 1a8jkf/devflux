@@ -4,10 +4,12 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { GithubService } from '../../services/GithubService';
 import { Icon } from '../../components/Icon';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function GistsScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   
   const [gists, setGists] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +55,7 @@ export default function GistsScreen() {
         <View style={styles.cardFooter}>
           <View style={{flexDirection: 'row', alignItems: 'center'}}>
             <Icon name="FileText" size={12} color={theme.colors.textSecondary} />
-            <Text style={[styles.cardDate, {marginLeft: 4}]}>{language || 'Texto'}</Text>
+            <Text style={[styles.cardDate, {marginLeft: 4}]}>{language || t('Texto')}</Text>
           </View>
           <Text style={styles.cardDate}>
             {new Date(item.updated_at).toLocaleDateString()}
@@ -72,7 +74,7 @@ export default function GistsScreen() {
       ) : gists.length === 0 ? (
         <View style={styles.center}>
           <Icon name="FileCode" size={48} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Nenhum Gist encontrado.</Text>
+          <Text style={styles.emptyText}>{t('Nenhum Gist encontrado.')}</Text>
         </View>
       ) : (
         <FlatList

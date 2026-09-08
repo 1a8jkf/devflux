@@ -1,4 +1,4 @@
-package com.marcos_app0001.DevFlux
+package com.marcos.devflux
 
 import android.view.View
 import com.facebook.react.ReactPackage

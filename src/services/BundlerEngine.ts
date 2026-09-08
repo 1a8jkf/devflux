@@ -1,4 +1,5 @@
 import { FileSystemService, FileNode } from './FileSystemService';
+import { DebugService } from './DebugService';
 
 /**
  * BundlerEngine — Manages real JSX/TSX transpilation via esbuild-wasm
@@ -93,11 +94,13 @@ export const BundlerEngine = {
    */
   async build(projectId: string): Promise<BuildResult> {
     // 1. Read all project files into a flat map
+    const buildStartedAt = Date.now();
     const files = await this.collectProjectFiles(projectId);
     
     // 2. Detect entry point
     const entryPoint = this.findEntryPoint(files);
     if (!entryPoint) {
+      DebugService.log('browser', 'error', 'Preview não encontrou entry point do projeto.', { project: projectId, files: Object.keys(files).length });
       return {
         js: '',
         css: '',
@@ -111,6 +114,7 @@ export const BundlerEngine = {
 
     // 4. Check if bundler WebView is connected
     if (!sendToBundler) {
+      DebugService.log('browser', 'error', 'Bundler WebView não está inicializado para o preview.', { project: projectId });
       return {
         js: '',
         css: '',
@@ -126,6 +130,7 @@ export const BundlerEngine = {
       // Timeout after 30 seconds
       const timeout = setTimeout(() => {
         pendingBuilds.delete(requestId);
+        DebugService.log('browser', 'error', 'Preview excedeu timeout de build.', { project: projectId, entryPoint, durationMs: Date.now() - buildStartedAt });
         resolve({
           js: '',
           css: '',
@@ -137,6 +142,14 @@ export const BundlerEngine = {
       pendingBuilds.set(requestId, {
         resolve: (result) => {
           clearTimeout(timeout);
+          const durationMs = Date.now() - buildStartedAt;
+          if (result.errors.length > 0) {
+            DebugService.log('browser', 'error', 'Preview retornou erros de build.', { project: projectId, entryPoint, durationMs, errors: result.errors });
+          } else if (result.warnings.length > 0) {
+            DebugService.log('browser', 'warn', 'Preview retornou avisos de build.', { project: projectId, entryPoint, durationMs, warnings: result.warnings });
+          } else if (durationMs > 8000) {
+            DebugService.log('browser', 'warn', 'Preview demorou mais que o esperado para compilar.', { project: projectId, entryPoint, durationMs });
+          }
           resolve(result);
         },
         reject: (error) => {
@@ -181,8 +194,8 @@ export const BundlerEngine = {
             try {
               const content = await FileSystemService.readFile(projectId, fullPath);
               files[fullPath] = content;
-            } catch (e) {
-              // Skip unreadable files
+            } catch (e: any) {
+              DebugService.log('file', 'warn', 'Arquivo ignorado no preview porque não pôde ser lido.', { project: projectId, file: fullPath, error: e?.message || String(e) });
             }
           }
         }
@@ -247,7 +260,8 @@ export const BundlerEngine = {
         ...(pkg.dependencies || {}),
         ...(pkg.devDependencies || {}),
       };
-    } catch {
+    } catch (e: any) {
+      DebugService.log('browser', 'warn', 'package.json do preview não pôde ser interpretado.', { error: e?.message || String(e) });
       return {};
     }
   },

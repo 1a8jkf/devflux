@@ -70,6 +70,10 @@ export const CodeEditorMock: React.FC<CodeEditorMockProps> = ({ code, language, 
                 autoCapitalize="none"
                 autoCorrect={false}
                 spellCheck={false}
+                autoComplete="off"
+                importantForAutofill="no"
+                keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+                disableFullscreenUI
                 textAlignVertical="top"
                 placeholderTextColor={theme.colors.textSecondary}
               />

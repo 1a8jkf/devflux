@@ -1,34 +1,27 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Platform } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { FileSystemService, ProjectInfo, ProjectType } from '../services/FileSystemService';
+import { FileSystemService, ProjectInfo } from '../services/FileSystemService';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function ProjetosScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
 
   const router = useRouter();
-  const [modalVisible, setModalVisible] = useState(false);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [selectedType, setSelectedType] = useState<ProjectType | null>(null);
-  const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
-  
+
   const [optionsModalVisible, setOptionsModalVisible] = useState(false);
   const [selectedOptionsProject, setSelectedOptionsProject] = useState<ProjectInfo | null>(null);
   const [duplicateModalVisible, setDuplicateModalVisible] = useState(false);
   const [duplicateName, setDuplicateName] = useState('');
 
-  const PACKAGES: Record<string, string[]> = {
-    react: ['react-router-dom', 'axios', 'styled-components', 'tailwindcss', 'framer-motion'],
-    node: ['express', 'mongoose', 'cors', 'dotenv', 'nodemon'],
-    html: [],
-    blank: []
-  };
 
   const loadProjects = async () => {
     setIsLoading(true);
@@ -43,22 +36,6 @@ export default function ProjetosScreen() {
     }, [])
   );
 
-  const handleCreateProject = async () => {
-    if (!newProjectName.trim() || !selectedType) return;
-    
-    setModalVisible(false);
-    const newProject = await FileSystemService.createProject(newProjectName.trim(), selectedType, selectedPackages);
-    setNewProjectName('');
-    setSelectedPackages([]);
-    setSelectedType(null);
-    router.push({ pathname: '/editor/codigo', params: { projectId: newProject.id, isNewProject: 'true', deps: selectedPackages.join(',') } });
-  };
-
-  const togglePackage = (pkg: string) => {
-    setSelectedPackages(prev => 
-      prev.includes(pkg) ? prev.filter(p => p !== pkg) : [...prev, pkg]
-    );
-  };
 
   const getIconForType = (type: string) => {
     switch(type) {
@@ -72,10 +49,10 @@ export default function ProjetosScreen() {
   const formatTime = (ms: number) => {
     const diff = Date.now() - ms;
     const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m atrás`;
+    if (mins < 60) return t('time.minutesAgo', '{value}m ago').replace('{value}', String(mins));
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h atrás`;
-    return `${Math.floor(hours / 24)}d atrás`;
+    if (hours < 24) return t('time.hoursAgo', '{value}h ago').replace('{value}', String(hours));
+    return t('time.daysAgo', '{value}d ago').replace('{value}', String(Math.floor(hours / 24)));
   };
 
   const handleDuplicate = async () => {
@@ -94,8 +71,14 @@ export default function ProjetosScreen() {
     await loadProjects();
   };
 
+  const filteredProjects = projects.filter(project => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return true;
+    return project.name.toLowerCase().includes(query) || project.type.toLowerCase().includes(query);
+  });
+
   const renderItem = ({ item }: { item: ProjectInfo }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.projectCard}
       onPress={() => router.push({ pathname: '/editor/codigo', params: { projectId: item.id } })}
     >
@@ -104,7 +87,7 @@ export default function ProjetosScreen() {
       </View>
       <View style={styles.projectInfo}>
         <Text style={styles.projectName}>{item.name}</Text>
-        <Text style={styles.projectMeta}>{item.type.toUpperCase()} • Editado {formatTime(item.updatedAt)}</Text>
+        <Text style={styles.projectMeta}>{item.type.toUpperCase()} • {t('Editado')} {formatTime(item.updatedAt)}</Text>
       </View>
       <TouchableOpacity onPress={() => { setSelectedOptionsProject(item); setOptionsModalVisible(true); }}>
         <Icon name="MoreVertical" size={20} color={theme.colors.textSecondary} />
@@ -114,24 +97,32 @@ export default function ProjetosScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Meus Projetos</Text>
-        <TouchableOpacity onPress={() => router.push('/bridge')}>
-          <Icon name="RefreshCw" size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-      </View>
-      
+
+
       <View style={styles.searchContainer}>
         <Icon name="Search" size={16} color={theme.colors.textSecondary} />
-        <TextInput 
+        <TextInput
           style={styles.searchInput}
-          placeholder="Buscar projetos..."
+          placeholder={t('Buscar projetos...')}
           placeholderTextColor={theme.colors.textSecondary}
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+          autoComplete="off"
+          importantForAutofill="no"
+          disableFullscreenUI
         />
+        {searchTerm.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchTerm('')} style={styles.searchClearBtn}>
+            <Icon name="X" size={16} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <FlatList
-        data={projects}
+        data={filteredProjects}
         keyExtractor={item => item.id}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
@@ -140,12 +131,18 @@ export default function ProjetosScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Icon name="FolderPlus" size={48} color={theme.colors.border} />
-            <Text style={styles.emptyText}>{isLoading ? 'Carregando...' : 'Nenhum projeto ainda.'}</Text>
+            <Text style={styles.emptyText}>{isLoading ? t('Carregando...') : searchTerm ? t('Nenhum projeto encontrado.') : t('Nenhum projeto ainda.')}</Text>
+            {!isLoading && !searchTerm && (
+              <TouchableOpacity style={styles.emptyButton} onPress={() => router.push('/novo-projeto')}>
+                <Icon name="Plus" size={16} color="#FFF" />
+                <Text style={styles.emptyButtonText}>{t('Criar Projeto')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
 
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.fab}
         onPress={() => router.push('/novo-projeto')}
       >
@@ -157,19 +154,19 @@ export default function ProjetosScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Opções do Projeto</Text>
+              <Text style={styles.modalTitle}>{t('Opções do Projeto')}</Text>
               <TouchableOpacity onPress={() => setOptionsModalVisible(false)}>
                 <Icon name="X" size={24} color={theme.colors.textPrimary} />
               </TouchableOpacity>
             </View>
             <View style={{ paddingHorizontal: 24, gap: 16 }}>
-              <TouchableOpacity style={styles.optionBtn} onPress={() => { setOptionsModalVisible(false); setDuplicateName(selectedOptionsProject?.name + ' Copy'); setDuplicateModalVisible(true); }}>
+              <TouchableOpacity style={styles.optionBtn} onPress={() => { setOptionsModalVisible(false); setDuplicateName(selectedOptionsProject?.name + ' (' + t('Cópia') + ')'); setDuplicateModalVisible(true); }}>
                 <Icon name="Copy" size={20} color={theme.colors.accentBlue} />
-                <Text style={styles.optionBtnText}>Duplicar</Text>
+                <Text style={styles.optionBtnText}>{t('Duplicar')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.optionBtn} onPress={handleDelete}>
                 <Icon name="Trash2" size={20} color={theme.colors.error} />
-                <Text style={[styles.optionBtnText, { color: theme.colors.error }]}>Excluir</Text>
+                <Text style={[styles.optionBtnText, { color: theme.colors.error }]}>{t('Excluir')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -180,21 +177,28 @@ export default function ProjetosScreen() {
       <Modal visible={duplicateModalVisible} transparent animationType="fade">
         <View style={[styles.modalOverlay, { justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }]}>
           <View style={[styles.modalContent, { borderRadius: 12, marginHorizontal: 24, paddingTop: 24, paddingBottom: 24 }]}>
-            <Text style={[styles.modalTitle, { paddingHorizontal: 24, marginBottom: 16 }]}>Nome da Cópia</Text>
+            <Text style={[styles.modalTitle, { paddingHorizontal: 24, marginBottom: 16 }]}>{t('Nome da Cópia')}</Text>
             <TextInput
               style={[styles.searchInput, { marginHorizontal: 24, backgroundColor: theme.colors.bgSurface, height: 48, borderRadius: 8, paddingHorizontal: 16, marginBottom: 24, marginLeft: 24 }]}
-              placeholder="Novo nome..."
+              placeholder={t('Novo nome...')}
               placeholderTextColor={theme.colors.textSecondary}
               value={duplicateName}
               onChangeText={setDuplicateName}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              autoComplete="off"
+              importantForAutofill="no"
+              keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+              disableFullscreenUI
               autoFocus
             />
             <View style={{ flexDirection: 'row', paddingHorizontal: 24, gap: 12 }}>
               <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: theme.colors.bgSurface, borderRadius: 8 }} onPress={() => setDuplicateModalVisible(false)}>
-                <Text style={{ color: theme.colors.textPrimary, fontWeight: 'bold' }}>Cancelar</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: 'bold' }}>{t('Cancelar')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={{ flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: theme.colors.accentBlue, borderRadius: 8 }} onPress={handleDuplicate}>
-                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Salvar</Text>
+                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{t('Salvar')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -228,16 +232,28 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     backgroundColor: theme.colors.bgElevated,
     marginHorizontal: 20,
     paddingHorizontal: 16,
-    height: 44,
-    borderRadius: 8,
+    height: 50,
+    borderRadius: 10,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
+    marginLeft: 10,
     fontFamily: theme.typography.ui,
-    fontSize: 15,
+    fontSize: 16,
+    lineHeight: 20,
     color: theme.colors.textPrimary,
+    paddingVertical: 0,
+  },
+  searchClearBtn: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: theme.colors.bgSurface,
   },
   list: {
     paddingHorizontal: 20,
@@ -248,8 +264,10 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     backgroundColor: theme.colors.bgElevated,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 10,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   projectIcon: {
     width: 48,
@@ -284,6 +302,21 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     fontSize: 16,
     color: theme.colors.textSecondary,
     marginTop: 16,
+    marginBottom: 18,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: theme.colors.accentBlue,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  emptyButtonText: {
+    color: '#FFF',
+    fontFamily: theme.typography.uiBold,
+    fontSize: 13,
   },
   fab: {
     position: 'absolute',

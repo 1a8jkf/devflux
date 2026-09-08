@@ -1,28 +1,16 @@
 import React, { useRef, useEffect, forwardRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform, DeviceEventEmitter } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Platform, DeviceEventEmitter, Keyboard } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { AppTheme } from '../theme';
+import { DebugService } from '../services/DebugService';
+import { ContextManager } from '../services/ContextManager';
 
-interface MonacoEditorProps {
-  code: string;
-  originalCode?: string;
-  language: string;
-  onChangeCode: (code: string) => void;
-  readOnly?: boolean;
-}
+import { CodeEditorProps, CodeEditorRef } from './CodeEditor';
 
-export interface MonacoEditorRef {
-  undo: () => void;
-  redo: () => void;
-  handleToolbarAction?: (type: string, meta?: any) => void;
-}
-
-const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly = false }: MonacoEditorProps, ref: React.ForwardedRef<MonacoEditorRef>) => {
-  const { theme, variant } = useAppTheme();
+export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, originalCode, language, onChangeCode, readOnly = false, filePath, onFocus, onBlur }, ref) => {
+  const { theme, isDark } = useAppTheme();
   const { settings } = useSettings();
-  const isDark = variant === 'dark';
   const webViewRef = useRef<WebView>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isLoaded = useRef(false);
@@ -79,13 +67,14 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
       -moz-osx-font-smoothing: grayscale;
       text-rendering: optimizeLegibility;
     }
-    html, body, #container { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: ${theme.colors.bgSurface}; }
-    /* Android Keyboard Fix: ensure textarea is technically visible but transparent */
-    .monaco-editor .inputarea {
-      opacity: 0.01 !important;
-      background: transparent !important;
-      color: transparent !important;
-      font-size: 16px !important;
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+      position: fixed; top: 0; left: 0;
+      background-color: ${theme.colors.bgSurface};
+    }
+    #container {
+      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+      position: absolute; top: 0; left: 0;
     }
     /* Fix bold/cut text rendering on Android WebView */
     .monaco-editor .view-lines,
@@ -104,6 +93,7 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
 <body>
   <div id="container"></div>
   <script>
+    window.__isReadOnly = ${readOnly};
     if (!window.ReactNativeWebView) {
       window.ReactNativeWebView = {
         postMessage: function(msg) {
@@ -163,21 +153,92 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           'editor.selectionHighlightBackground': '#ADD6FF26',
         }
       });
-      // Force Android WebViews to use password input for Monaco helper to kill IME composition, word suggestions & double-space period
+      // Android WebView: keep textarea but disable IME suggestions/autocorrect
       var origCreateElement = document.createElement;
       document.createElement = function(tag, options) {
-        if (tag && tag.toLowerCase() === 'textarea') {
-          var input = origCreateElement.call(document, 'input', options);
-          try { input.type = 'password'; } catch(e) {}
-          input.setAttribute('autocorrect', 'off');
-          input.setAttribute('autocapitalize', 'none');
-          input.setAttribute('spellcheck', 'false');
-          input.setAttribute('autocomplete', 'off');
-          input.setAttribute('data-gramm', 'false');
-          return input;
+        if (tag === 'textarea' || tag === 'TEXTAREA') {
+          var el = origCreateElement.call(document, tag, options);
+          el.setAttribute('autocorrect', 'off');
+          el.setAttribute('autocapitalize', 'none');
+          el.setAttribute('spellcheck', 'false');
+          el.setAttribute('autocomplete', 'off');
+          el.setAttribute('autofill', 'off');
+          el.setAttribute('aria-autocomplete', 'none');
+          el.setAttribute('inputmode', 'text');
+          el.setAttribute('type', 'text');
+          // Let native keyboard handle predictive text and composition events
+          el.setAttribute('data-gramm', 'false');
+          el.setAttribute('enterkeyhint', 'enter');
+          el.setAttribute('tabindex', '0');
+
+          // --- ANDROID IME FIX ---
+          // Prevent Monaco from modifying the textarea value or selection during composition.
+          // This stops Android Gboard from dropping characters when typing fast.
+          var isComposing = false;
+          el.addEventListener('compositionstart', function() { isComposing = true; });
+          el.addEventListener('compositionend', function() { isComposing = false; });
+          
+          var originalSetSelectionRange = el.setSelectionRange;
+          el.setSelectionRange = function(start, end, direction) {
+            // If composing, do NOT let Monaco touch the selection, as this cancels Gboard composition!
+            if (isComposing) return;
+            return originalSetSelectionRange.call(this, start, end, direction);
+          };
+
+          var valueDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+          if (valueDesc && valueDesc.set) {
+            Object.defineProperty(el, 'value', {
+              get: function() { return valueDesc.get.call(this); },
+              set: function(val) {
+                if (isComposing && val === '') {
+                  // Ignore value resets during composition to prevent dropping characters
+                  return;
+                }
+                valueDesc.set.call(this, val);
+              }
+            });
+          }
+          // -----------------------
+
+          return el;
         }
         return origCreateElement.call(document, tag, options);
       };
+
+      function normalizePastedCode(text) {
+        return String(text || '')
+          .replace(/^\\uFEFF/, '')
+          .replace(/\\r\\n/g, '\\n')
+          .replace(/\\r/g, '\\n');
+      }
+
+      function hasVisibleSuggestion() {
+        return !!document.querySelector('.suggest-widget.visible');
+      }
+
+      function acceptVisibleSuggestion() {
+        if (!hasVisibleSuggestion()) return false;
+        modelEditor.trigger('keyboard', 'acceptSelectedSuggestion', null);
+        return true;
+      }
+
+      function focusMonacoInput() {
+        var input = document.querySelector('.monaco-editor textarea.inputarea, textarea.inputarea, .monaco-editor .inputarea, .inputarea');
+        if (!input) return false;
+        try {
+          // Remove readonly temporarily if Monaco set it
+          var wasReadOnly = input.hasAttribute('readonly');
+          if (wasReadOnly) input.removeAttribute('readonly');
+          
+          input.focus({ preventScroll: true });
+          input.click();
+          
+          if (wasReadOnly && window.__isReadOnly) input.setAttribute('readonly', 'readonly');
+        } catch(e) {
+          try { input.focus(); } catch(inner) {}
+        }
+        return document.activeElement === input;
+      }
 
       var originalCodeStr = '${encodeURIComponent(initialOriginalCode.current || '').replace(/'/g, "%27")}';
       var isDiff = originalCodeStr !== '';
@@ -196,11 +257,21 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           fontWeight: 'normal',
           fontLigatures: false,
           wordWrap: '${settings.wordWrap}',
-          readOnly: ${readOnly},
+          readOnly: window.__isReadOnly,
           renderSideBySide: false,
           scrollBeyondLastLine: false,
           padding: { top: 16 },
           renderLineHighlight: 'line',
+          formatOnPaste: false,
+          folding: false,
+          links: false,
+          occurrencesHighlight: false,
+          quickSuggestions: { other: true, comments: false, strings: true },
+          quickSuggestionsDelay: 120,
+          suggestOnTriggerCharacters: true,
+          acceptSuggestionOnEnter: 'on',
+          tabCompletion: 'on',
+          contextmenu: false,
           'bracketPairColorization.enabled': true
         });
         editor.setModel({
@@ -219,33 +290,93 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           fontWeight: 'normal',
           fontLigatures: false,
           wordWrap: '${settings.wordWrap}',
-          readOnly: ${readOnly},
+          readOnly: window.__isReadOnly,
           scrollBeyondLastLine: false,
           padding: { top: 16 },
           renderLineHighlight: 'line',
+          formatOnPaste: false,
+          folding: false,
+          links: false,
+          occurrencesHighlight: false,
+          quickSuggestions: { other: true, comments: false, strings: true },
+          quickSuggestionsDelay: 120,
+          suggestOnTriggerCharacters: true,
+          acceptSuggestionOnEnter: 'on',
+          tabCompletion: 'on',
+          contextmenu: false,
           'bracketPairColorization.enabled': true
         });
       }
 
       var modelEditor = isDiff ? editor.getModifiedEditor() : editor;
 
-      // Android WebView Keyboard Fix
-      document.addEventListener('touchend', function() {
-         if (!${readOnly}) {
-           setTimeout(function() {
-             var input = document.querySelector('textarea.inputarea');
-             if (input && document.activeElement !== input) {
-                input.focus();
-             }
-           }, 50);
-         }
-      }, false);
+      // Handle touch events to ensure keyboard opens on Android.
+      // We track touchstart position and only trigger the keyboard if the
+      // finger barely moved (tap), not when the user is scrolling.
+      // IMPORTANT: We MUST use the capture phase (true) because Monaco calls
+      // stopPropagation() on touch events internally, which would prevent
+      // these listeners from ever firing if they relied on bubbling!
+      var touchStartX = 0, touchStartY = 0;
+      var containerEl = document.getElementById('container');
+      containerEl.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+        }
+      }, true);
+      containerEl.addEventListener('touchend', function(e) {
+        if (window.__isReadOnly) return;
+        var dx = 0, dy = 0;
+        if (e.changedTouches.length === 1) {
+          dx = Math.abs(e.changedTouches[0].clientX - touchStartX);
+          dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
+        }
+        // Only treat as a tap (not a scroll) if movement < 15px
+        if (dx > 15 || dy > 15) return;
+        
+        // Focus MUST be synchronous in the same user gesture to trigger the soft keyboard
+        var focused = focusMonacoInput();
+        if (focused) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'requestNativeKeyboard' }));
+        }
+      }, true);
 
-      // Send updates to React Native
+      // Send updates to React Native with a short debounce to avoid serializing massive JSON on every keystroke
+      var typingTimeout = null;
       modelEditor.onDidChangeModelContent(function() {
-        var content = modelEditor.getValue();
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'change', content: content }));
+        if (typingTimeout) clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(function() {
+          var content = modelEditor.getValue();
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'change', content: content }));
+        }, 20);
       });
+
+      modelEditor.onDidFocusEditorText(function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'focus' }));
+      });
+
+      modelEditor.onDidBlurEditorText(function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'blur' }));
+      });
+
+      document.addEventListener('paste', function(event) {
+        if (window.__isReadOnly) return;
+        var clipboard = event.clipboardData || window.clipboardData;
+        var raw = clipboard && clipboard.getData ? clipboard.getData('text/plain') : '';
+        if (!raw || (raw.indexOf('\\n') === -1 && raw.indexOf('\\r') === -1)) return;
+
+        event.preventDefault();
+        var selection = modelEditor.getSelection();
+        if (!selection) return;
+
+        modelEditor.pushUndoStop();
+        modelEditor.executeEdits('devflux-paste', [{
+          range: selection,
+          text: normalizePastedCode(raw),
+          forceMoveMarkers: true
+        }]);
+        modelEditor.pushUndoStop();
+      }, true);
 
       // Listen for updates from React Native
       var handleMsg = function(event) {
@@ -264,15 +395,24 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           }
         } else if (msg.type === 'updateSettings') {
           editor.updateOptions(msg.settings);
+        } else if (msg.type === 'updateReadOnly') {
+          window.__isReadOnly = !!msg.readOnly;
+          editor.updateOptions({ readOnly: window.__isReadOnly });
+          if (isDiff) {
+            editor.getOriginalEditor().updateOptions({ readOnly: window.__isReadOnly });
+            editor.getModifiedEditor().updateOptions({ readOnly: window.__isReadOnly });
+          }
         } else if (msg.type === 'triggerAction') {
           if (msg.action === 'undo') modelEditor.trigger('keyboard', 'undo', null);
           if (msg.action === 'redo') modelEditor.trigger('keyboard', 'redo', null);
         } else if (msg.type === 'toolbarAction') {
-          if (typeof focusMonacoTextarea === 'function') focusMonacoTextarea();
+          focusMonacoInput();
           if (modelEditor && typeof modelEditor.focus === 'function') modelEditor.focus();
           if (msg.actionType === 'modifier') {
             window.keyboardModifiers = msg.meta;
-          } else if (msg.actionType === 'keypress') {
+            return;
+          }
+          if (msg.actionType === 'keypress') {
             var key = msg.meta.key;
             if (msg.meta.ctrlKey) {
               if (key === 'c') { modelEditor.trigger('keyboard', 'editor.action.clipboardCopyAction', null); return; }
@@ -282,10 +422,12 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
               if (key === 'y') { modelEditor.trigger('keyboard', 'redo', null); return; }
               if (key === 'a') { modelEditor.setSelection(modelEditor.getModel().getFullModelRange()); return; }
               if (key === 'f') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
-              if (key === 's') { /* save handled externally usually */ return; }
+              if (key === 's') { return; }
             }
             if (key === 'Escape') { modelEditor.trigger('keyboard', 'closeFindWidget', null); return; }
+            if (key === 'Enter') { if (acceptVisibleSuggestion()) return; modelEditor.trigger('keyboard', 'type', { text: '\n' }); return; }
             if (key === 'Tab') { modelEditor.trigger('keyboard', 'tab', null); return; }
+            if (key === 'Backspace') { modelEditor.trigger('keyboard', 'deleteLeft', null); return; }
             if (key === 'Undo' || key === 'undo') { modelEditor.trigger('keyboard', 'undo', null); return; }
             if (key === 'Redo' || key === 'redo') { modelEditor.trigger('keyboard', 'redo', null); return; }
             if (key === 'Search' || key === 'search') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
@@ -293,7 +435,7 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
             if (key === 'ArrowRight') { modelEditor.trigger('keyboard', 'cursorRight', null); return; }
             if (key === 'ArrowUp') { modelEditor.trigger('keyboard', 'cursorUp', null); return; }
             if (key === 'ArrowDown') { modelEditor.trigger('keyboard', 'cursorDown', null); return; }
-            if (key.length === 1) {
+            if (key.length >= 1) {
               modelEditor.trigger('keyboard', 'type', { text: key }); return;
             }
           }
@@ -306,6 +448,11 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
       
       window.keyboardModifiers = { ctrlKey: false, shiftKey: false, altKey: false };
       document.addEventListener('keydown', function(e) {
+         if (e.key === 'Enter' && acceptVisibleSuggestion()) {
+           e.preventDefault();
+           e.stopPropagation();
+           return;
+         }
          if (window.keyboardModifiers.ctrlKey && e.key && e.key.length === 1) {
            var key = e.key.toLowerCase();
            if (key === 'c') { modelEditor.trigger('keyboard', 'editor.action.clipboardCopyAction', null); e.preventDefault(); }
@@ -318,6 +465,24 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
       
       // Removing custom focusInput listeners as they interfere with Android soft keyboard
       // Let Monaco handle its own focus events natively.
+
+      if (window.visualViewport) {
+        var updateViewport = function() {
+          var container = document.getElementById('container');
+          container.style.height = window.visualViewport.height + 'px';
+          container.style.top = window.visualViewport.offsetTop + 'px';
+          if (editor) {
+            editor.layout();
+            var pos = modelEditor.getPosition();
+            if (pos) {
+              modelEditor.revealPositionInCenterIfOutsideViewport(pos);
+            }
+          }
+        };
+        window.visualViewport.addEventListener('resize', updateViewport);
+        window.visualViewport.addEventListener('scroll', updateViewport);
+        setTimeout(updateViewport, 100);
+      }
       
       window.addEventListener('message', handleMsg);
       document.addEventListener('message', handleMsg);
@@ -328,10 +493,14 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
   </script>
 </body>
 </html>
-  `, [theme, isDark, readOnly, settings]);
+  `, []); // Static dependency array: the WebView HTML mounts ONCE. All dynamic states are synced via postMessage.
 
   const latestCode = useRef(code);
-  const internalUpdate = useRef(false);
+  const onChangeCodeRef = useRef(onChangeCode);
+
+  useEffect(() => {
+    onChangeCodeRef.current = onChangeCode;
+  }, [onChangeCode]);
 
   // We handle [code] updates in a single useEffect below
 
@@ -339,9 +508,29 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'change') {
-        internalUpdate.current = true;
+        recentInternalChanges.current.push(data.content);
+        if (recentInternalChanges.current.length > 10) {
+          recentInternalChanges.current.shift();
+        }
         latestCode.current = data.content;
         onChangeCode(data.content);
+      } else if (data.type === 'requestNativeKeyboard') {
+        if (!readOnly && Platform.OS !== 'web') {
+          (global as any).activeInputTarget = 'editor';
+          DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: 'editor', keyboardExpected: true });
+          if (webViewRef.current && typeof (webViewRef.current as any).requestFocus === 'function') {
+            (webViewRef.current as any).requestFocus();
+          }
+        }
+      } else if (data.type === 'focus') {
+        // Only set the global target; do NOT emit SHOW_KEYBOARD_TOOLBAR here.
+        // The toolbar is shown via requestNativeKeyboard (user tap) only.
+        // Emitting on every internal Monaco 'focus' event causes the keyboard
+        // toolbar to pop up while scrolling.
+        (global as any).activeInputTarget = 'editor';
+        if (onFocus) onFocus();
+      } else if (data.type === 'blur') {
+        if (onBlur) onBlur();
       } else if (data.type === 'ready') {
         isLoaded.current = true;
         postToEditor({ type: 'updateValue', value: latestCode.current });
@@ -349,6 +538,7 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
         postToEditor({ type: 'updateLanguage', language: getMonacoLanguage(language) });
       } else if (data.type === 'error') {
         console.error('Monaco Editor Error:', data.message);
+        DebugService.log('editor', 'error', 'Monaco Editor Error: ' + data.message, { project: ContextManager.getActiveProject() || undefined, file: filePath, engine: 'monaco' });
       }
     } catch (e) {}
   };
@@ -360,14 +550,18 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           if (typeof event.data === 'string') {
             const data = JSON.parse(event.data);
             if (data.type === 'change') {
-              internalUpdate.current = true;
+              recentInternalChanges.current.push(data.content);
+              if (recentInternalChanges.current.length > 10) {
+                recentInternalChanges.current.shift();
+              }
               latestCode.current = data.content;
-              onChangeCode(data.content);
+              onChangeCodeRef.current(data.content);
             } else if (data.type === 'ready') {
               isLoaded.current = true;
-              postToEditor({ type: 'updateValue', value: code });
-              postToEditor({ type: 'updateTheme', theme: monacoThemeName });
-              postToEditor({ type: 'updateLanguage', language: getMonacoLanguage(language) });
+              postToEditor({ type: 'updateValue', value: latestCode.current });
+              // For web, we need to pass the current dynamic states when ready
+              postToEditor({ type: 'updateTheme', theme: isDark ? 'devflux-dark' : 'vs' });
+              postToEditor({ type: 'updateLanguage', language: getMonacoLanguage(initialLanguage.current) });
             }
           }
         } catch (e) {}
@@ -375,7 +569,11 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
       window.addEventListener('message', handleWebMessage);
       return () => window.removeEventListener('message', handleWebMessage);
     }
-  }); // Remove [] so it captures latest code, monacoThemeName, language in the closure
+  }, []); // Run only once
+
+  useEffect(() => {
+    postToEditor({ type: 'updateReadOnly', readOnly });
+  }, [readOnly]);
 
   const postToEditor = (msg: any) => {
     if (!isLoaded.current) return;
@@ -402,15 +600,22 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
     }
   }));
 
+  const recentInternalChanges = useRef<string[]>([]);
+
   useEffect(() => {
-    // Only send to WebView if this change came from OUTSIDE (e.g., Live Sync PC)
-    // If it came from the user typing, internalUpdate is true, so we skip it to prevent cursor jumping!
-    if (internalUpdate.current) {
-      internalUpdate.current = false; // Reset for next time
-    } else {
-      latestCode.current = code;
-      postToEditor({ type: 'updateValue', value: code });
+    // If the incoming code is in our recent internal changes history, it's just a delayed echo of user typing.
+    // Ignore it to prevent race conditions that break IME composition.
+    const index = recentInternalChanges.current.indexOf(code);
+    if (index !== -1) {
+      // Remove this and older echoes to keep history clean
+      recentInternalChanges.current.splice(0, index + 1);
+      return;
     }
+
+    // Otherwise, this is a genuine external change (Live Sync, undo/redo from React, or new file)
+    latestCode.current = code;
+    recentInternalChanges.current = []; // Clear history on external change
+    postToEditor({ type: 'updateValue', value: code });
   }, [code]);
 
   useEffect(() => {
@@ -433,13 +638,7 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
   }, [settings]);
 
   return (
-    <View 
-      style={styles.container}
-      onTouchStart={() => {
-        (global as any).activeInputTarget = 'editor';
-        DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: 'editor' });
-      }}
-    >
+    <View style={styles.container}>
       {Platform.OS === 'web' ? (
         <iframe
           ref={iframeRef as any}
@@ -454,15 +653,18 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
           onMessage={handleMessage}
           style={styles.webview}
           bounces={false}
-          scrollEnabled={true}
-          nestedScrollEnabled={true}
+          scrollEnabled={false}
+          nestedScrollEnabled={false}
           keyboardDisplayRequiresUserAction={false}
-          androidLayerType="none"
+          androidLayerType="hardware"
           scalesPageToFit={false}
+          autoManageStatusBarEnabled={false}
+          allowsFullscreenVideo={false}
           textZoom={100}
           javaScriptEnabled={true}
           originWhitelist={['*']}
           allowFileAccess={true}
+          domStorageEnabled={true}
           startInLoadingState={true}
           renderLoading={() => (
             <View style={styles.loading}>
@@ -473,7 +675,7 @@ const MonacoEditorBase = ({ code, originalCode, language, onChangeCode, readOnly
       )}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -491,4 +693,4 @@ const styles = StyleSheet.create({
   }
 });
 
-export const MonacoEditor = forwardRef(MonacoEditorBase);
+MonacoEditor.displayName = 'MonacoEditor';

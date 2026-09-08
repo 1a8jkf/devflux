@@ -4,7 +4,7 @@ import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from './Icon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TerminalView } from './TerminalView';
+import { TerminalView, TerminalViewRef } from './TerminalView';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const HANDLE_HEIGHT = 36;
@@ -14,6 +14,7 @@ const MID_HEIGHT = SCREEN_HEIGHT * 0.5;
 interface TerminalSheetProps {
   projectId: string;
   visible?: boolean;
+  onOpenInTab?: () => void;
 }
 
 export interface TerminalSheetRef {
@@ -21,9 +22,10 @@ export interface TerminalSheetRef {
   expand: () => void;
   collapse: () => void;
   runCommand: (cmd: string) => void;
+  reset: () => void;
 }
 
-export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId, visible = true }, ref) => {
+export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId, visible = true, onOpenInTab }, ref) => {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const insets = useSafeAreaInsets();
@@ -33,6 +35,7 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
   const heightAnim = useRef(new Animated.Value(MIN_HEIGHT)).current;
   const lastHeight = useRef(MIN_HEIGHT);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [terminalResetKey, setTerminalResetKey] = useState(0);
 
   useEffect(() => {
     // If insets change dynamically, update height if collapsed
@@ -53,7 +56,11 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
     }).start();
   };
 
-  const terminalViewRef = useRef<any>(null);
+  const terminalViewRef = useRef<TerminalViewRef>(null);
+
+  const resetTerminal = () => {
+    setTerminalResetKey(prev => prev + 1);
+  };
 
   useImperativeHandle(ref, () => ({
     snapToIndex: (index: number) => {
@@ -64,7 +71,8 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
     collapse: () => snapTo(MIN_HEIGHT),
     runCommand: (cmd: string) => {
       terminalViewRef.current?.runCommand?.(cmd);
-    }
+    },
+    reset: resetTerminal
   }));
 
   const panResponder = useRef(
@@ -120,14 +128,22 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
         <View style={styles.greenDot} />
         <Text style={styles.headerTitle} numberOfLines={1}>projects/{projectId}</Text>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={toggleExpand} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        {onOpenInTab && (
+          <TouchableOpacity style={styles.headerIconButton} onPress={onOpenInTab} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Icon name="Maximize2" size={15} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity style={styles.headerIconButton} onPress={resetTerminal} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Icon name="RefreshCw" size={15} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.headerIconButton} onPress={toggleExpand} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Icon name={isExpanded ? 'ChevronDown' : 'ChevronUp'} size={16} color={theme.colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
       {/* Terminal content — uses separate Alpine session for each project */}
       <View style={styles.terminalArea}>
-        <TerminalView ref={terminalViewRef} projectId={projectId} sessionId={`sheet-${projectId}`} />
+        <TerminalView ref={terminalViewRef} projectId={projectId} sessionId={`sheet-${projectId}`} resetKey={terminalResetKey} />
       </View>
     </Animated.View>
   );
@@ -178,7 +194,13 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     fontSize: 11,
     color: theme.colors.textSecondary,
     marginLeft: 6,
-    maxWidth: '70%',
+    maxWidth: '62%',
+  },
+  headerIconButton: {
+    width: 30,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   terminalArea: {
     flex: 1,

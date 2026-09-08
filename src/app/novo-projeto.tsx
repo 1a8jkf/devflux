@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { FileSystemService, ProjectType } from '../services/FileSystemService';
+import { FileSystemService } from '../services/FileSystemService';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLanguage } from '../contexts/LanguageContext';
+import { NodeRunner } from '../utils/nodeRunner';
 
-const PACKAGES: Record<string, string[]> = {
+type TemplateType = 'html' | 'node' | 'react' | 'blank';
+
+const PACKAGES: Record<TemplateType, string[]> = {
   html: [],
   react: ['react-router-dom', 'lucide-react', 'axios'],
   node: ['express', 'mongoose', 'cors', 'dotenv'],
@@ -20,24 +25,68 @@ export default function NovoProjetoScreen() {
   const styles = getStyles(theme);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
 
   const [step, setStep] = useState(1);
   const [newProjectName, setNewProjectName] = useState('');
-  const [installPath, setInstallPath] = useState('/storage/projects/');
-  const [selectedType, setSelectedType] = useState<ProjectType | null>(null);
+  const [selectedType, setSelectedType] = useState<TemplateType | null>(null);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
   const [alpineInstalled, setAlpineInstalled] = useState<boolean | null>(null);
+  const [showAlpineModal, setShowAlpineModal] = useState(false);
 
   useEffect(() => {
     const check = async () => {
       const done = await AsyncStorage.getItem('devflux_alpine_installed');
-      setAlpineInstalled(done === 'true');
+      if (done === 'true') {
+        setAlpineInstalled(true);
+        return;
+      }
+
+      // AsyncStorage flag is not set — query the backend to confirm real state
+      try {
+        await NodeRunner.waitForEnvironment(8000);
+        const reqId = `check-alpine-wizard-${Date.now()}`;
+        const backendResult = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const removeListener = NodeRunner.addListener((data: any) => {
+            if (settled || data?.type !== 'LINUX_CHECK_STATUS' || data?.reqId !== reqId) return;
+            settled = true;
+            removeListener();
+            resolve(data?.payload?.installed === true);
+          });
+          setTimeout(() => {
+            if (!settled) { settled = true; removeListener(); resolve(false); }
+          }, 6000);
+          NodeRunner.send({ type: 'CHECK_ALPINE', reqId });
+        });
+
+        if (backendResult) {
+          // Backend confirms Alpine is installed — fix the stale AsyncStorage flag
+          await AsyncStorage.setItem('devflux_alpine_installed', 'true');
+          setAlpineInstalled(true);
+        } else {
+          setAlpineInstalled(false);
+        }
+      } catch {
+        // If backend is unreachable, assume not installed
+        setAlpineInstalled(false);
+      }
     };
     check();
   }, []);
 
+  // Reset all wizard state whenever this screen gains focus (e.g. navigating back from editor)
+  useFocusEffect(
+    useCallback(() => {
+      setStep(1);
+      setNewProjectName('');
+      setSelectedType(null);
+      setSelectedPackages([]);
+    }, [])
+  );
+
   const handleNext = () => {
-    if (step === 1 && newProjectName.trim() && installPath.trim()) setStep(2);
+    if (step === 1 && newProjectName.trim()) setStep(2);
     else if (step === 2 && selectedType) setStep(3);
   };
 
@@ -46,48 +95,42 @@ export default function NovoProjetoScreen() {
 
     // Block if Alpine Linux is not installed
     if (!alpineInstalled) {
-      Alert.alert(
-        'Alpine Linux Necessário',
-        'Para criar projetos, é necessário instalar o Alpine Linux primeiro. Vá até a tela inicial e execute a instalação.',
-        [
-          { text: 'Voltar', onPress: () => router.back() },
-          { text: 'OK', style: 'cancel' }
-        ]
-      );
+      setShowAlpineModal(true);
       return;
     }
-    
-    // Pass custom path combined with name to FileSystemService if we supported it
-    // For now we'll just use the name as projectId to maintain compatibility with our simple VFS
-    // In a fully native environment we would create directories recursively
-    const newProject = await FileSystemService.createProject(newProjectName.trim(), selectedType, selectedPackages);
-    
+
+    const projectType = selectedType === 'blank' ? 'html' : selectedType;
+    const newProject = await FileSystemService.createProject(newProjectName.trim(), projectType, selectedPackages);
+
     // Redirect to editor with terminal expansion params
-    router.replace({ 
-      pathname: '/editor/codigo', 
-      params: { 
-        projectId: newProject.id, 
-        isNewProject: 'true', 
+    router.replace({
+      pathname: '/editor/codigo',
+      params: {
+        projectId: newProject.id,
+        isNewProject: 'true',
         deps: selectedPackages.join(','),
-        cwd: installPath,
         templateType: selectedType
-      } 
+      }
     });
   };
 
   const togglePackage = (pkg: string) => {
-    setSelectedPackages(prev => 
+    setSelectedPackages(prev =>
       prev.includes(pkg) ? prev.filter(p => p !== pkg) : [...prev, pkg]
     );
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { paddingTop: insets.top }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+    >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()}>
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Novo Projeto (Wizard)</Text>
+        <Text style={styles.headerTitle}>{t('Novo Projeto (Wizard)')}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -95,37 +138,47 @@ export default function NovoProjetoScreen() {
         <View style={[styles.progressLine, { width: `${(step / 3) * 100}%` }]} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 96 }]}
+        keyboardShouldPersistTaps="handled"
+      >
         {step === 1 && (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Informações Básicas</Text>
-            
-            <Text style={styles.label}>Nome do Projeto</Text>
-            <TextInput 
+            <Text style={styles.stepTitle}>{t('Informações Básicas')}</Text>
+
+            <Text style={styles.label}>{t('Nome do Projeto')}</Text>
+            <TextInput
               style={styles.input}
               placeholder="Ex: meu-super-app"
               placeholderTextColor={theme.colors.textSecondary}
               value={newProjectName}
               onChangeText={setNewProjectName}
+              autoCapitalize="none"
+              autoCorrect={false}
+              spellCheck={false}
+              autoComplete="off"
+              importantForAutofill="no"
+              keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+              disableFullscreenUI
               autoFocus
             />
 
-            <Text style={styles.label}>Caminho de Instalação (Path)</Text>
-            <TextInput 
-              style={styles.input}
-              placeholder="/storage/projects/"
-              placeholderTextColor={theme.colors.textSecondary}
-              value={installPath}
-              onChangeText={setInstallPath}
-            />
-            <Text style={styles.helperText}>Onde o diretório raiz será criado no Virtual File System.</Text>
+            <View style={styles.storageNotice}>
+              <Icon name="FolderLock" size={20} color={theme.colors.accentTeal} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.storageNoticeText}>
+                  {t('Por limitação do Android, todos os projetos ficam na pasta de projetos do próprio DevFlux.')}
+                </Text>
+                <Text style={styles.storagePath}>DevFluxProjects/</Text>
+              </View>
+            </View>
 
-            <TouchableOpacity 
-              style={[styles.nextButton, (!newProjectName.trim() || !installPath.trim()) && styles.disabledButton]} 
+            <TouchableOpacity
+              style={[styles.nextButton, !newProjectName.trim() && styles.disabledButton]}
               onPress={handleNext}
-              disabled={!newProjectName.trim() || !installPath.trim()}
+              disabled={!newProjectName.trim()}
             >
-              <Text style={styles.nextButtonText}>Avançar</Text>
+              <Text style={styles.nextButtonText}>{t('Avançar')}</Text>
               <Icon name="ArrowRight" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
@@ -133,21 +186,21 @@ export default function NovoProjetoScreen() {
 
         {step === 2 && (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Framework e Template</Text>
-            
+            <Text style={styles.stepTitle}>{t('Framework e Template')}</Text>
+
             <TouchableOpacity style={[styles.templateOption, selectedType === 'html' && styles.templateOptionSelected]} onPress={() => { setSelectedType('html'); setSelectedPackages([]); }}>
               <Icon name="FileCode2" size={24} color={theme.colors.accentBlue} />
               <View style={styles.templateInfo}>
                 <Text style={styles.templateName}>HTML / CSS / JS</Text>
-                <Text style={styles.templateDesc}>Projeto web básico</Text>
+                <Text style={styles.templateDesc}>{t('Projeto web básico')}</Text>
               </View>
             </TouchableOpacity>
-            
+
             <TouchableOpacity style={[styles.templateOption, selectedType === 'react' && styles.templateOptionSelected]} onPress={() => { setSelectedType('react'); setSelectedPackages([]); }}>
               <Icon name="Layout" size={24} color={theme.colors.accentPurple} />
               <View style={styles.templateInfo}>
                 <Text style={styles.templateName}>React (Vite)</Text>
-                <Text style={styles.templateDesc}>Single Page Application</Text>
+                <Text style={styles.templateDesc}>{t('Single Page Application')}</Text>
               </View>
             </TouchableOpacity>
 
@@ -155,24 +208,24 @@ export default function NovoProjetoScreen() {
               <Icon name="Server" size={24} color={theme.colors.accentTeal} />
               <View style={styles.templateInfo}>
                 <Text style={styles.templateName}>Node.js API</Text>
-                <Text style={styles.templateDesc}>Servidor Backend</Text>
+                <Text style={styles.templateDesc}>{t('Servidor Backend')}</Text>
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.templateOption, selectedType === 'blank' && styles.templateOptionSelected]} onPress={() => { setSelectedType('blank'); setSelectedPackages([]); }}>
               <Icon name="TerminalSquare" size={24} color={theme.colors.textPrimary} />
               <View style={styles.templateInfo}>
-                <Text style={styles.templateName}>Projeto em Branco (Linux)</Text>
-                <Text style={styles.templateDesc}>Apenas o terminal livre</Text>
+                <Text style={styles.templateName}>{t('Projeto em Branco (Linux)')}</Text>
+                <Text style={styles.templateDesc}>{t('Apenas o terminal livre')}</Text>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.nextButton, !selectedType && styles.disabledButton, { marginTop: 24 }]} 
+            <TouchableOpacity
+              style={[styles.nextButton, !selectedType && styles.disabledButton, { marginTop: 24 }]}
               onPress={handleNext}
               disabled={!selectedType}
             >
-              <Text style={styles.nextButtonText}>Avançar para Pacotes</Text>
+              <Text style={styles.nextButtonText}>{t('Avançar para Pacotes')}</Text>
               <Icon name="ArrowRight" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
@@ -180,22 +233,22 @@ export default function NovoProjetoScreen() {
 
         {step === 3 && selectedType && (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Dependências (NPM)</Text>
-            <Text style={styles.helperText}>Selecione os pacotes que o Terminal instalará na inicialização.</Text>
-            
+            <Text style={styles.stepTitle}>{t('Dependências (NPM)')}</Text>
+            <Text style={styles.helperText}>{t('Selecione os pacotes que o Terminal instalará na inicialização.')}</Text>
+
             {selectedType === 'html' ? (
               <View style={styles.emptyPackages}>
                 <Icon name="Box" size={48} color={theme.colors.border} />
-                <Text style={styles.emptyPackagesText}>Nenhum pacote NPM necessário para HTML estático.</Text>
+                <Text style={styles.emptyPackagesText}>{t('Nenhum pacote NPM necessário para HTML estático.')}</Text>
               </View>
             ) : (
               <View style={styles.chipsContainer}>
                 {PACKAGES[selectedType].map(pkg => {
                   const isSelected = selectedPackages.includes(pkg);
                   return (
-                    <TouchableOpacity 
-                      key={pkg} 
-                      style={[styles.chip, isSelected && styles.chipSelected]} 
+                    <TouchableOpacity
+                      key={pkg}
+                      style={[styles.chip, isSelected && styles.chipSelected]}
                       onPress={() => togglePackage(pkg)}
                     >
                       <Icon name={isSelected ? 'Check' : 'Plus'} size={14} color={isSelected ? '#FFF' : theme.colors.textSecondary} />
@@ -207,13 +260,38 @@ export default function NovoProjetoScreen() {
             )}
 
             <TouchableOpacity style={[styles.nextButton, { marginTop: 32, backgroundColor: theme.colors.success }]} onPress={handleCreateProject}>
-              <Text style={styles.nextButtonText}>Montar Projeto e Abrir Shell</Text>
+              <Text style={styles.nextButtonText}>{t('Montar Projeto e Abrir Shell')}</Text>
               <Icon name="Terminal" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>
         )}
       </ScrollView>
-    </View>
+
+      {/* Alpine Linux Required Custom Modal */}
+      <Modal visible={showAlpineModal} transparent animationType="fade" onRequestClose={() => setShowAlpineModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <Icon name="Box" size={48} color={theme.colors.accentBlue} />
+            </View>
+            <Text style={styles.modalTitle}>{t('Alpine Linux Necessário')}</Text>
+            <Text style={styles.modalDesc}>
+              {t('Para criar projetos, é necessário instalar o ecossistema Alpine Linux primeiro. Volte até a tela inicial para executar a instalação.')}
+            </Text>
+            
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+              <TouchableOpacity style={[styles.nextButton, { flex: 1, backgroundColor: theme.colors.bgSurface, borderWidth: 1, borderColor: theme.colors.border }]} onPress={() => setShowAlpineModal(false)}>
+                <Text style={[styles.nextButtonText, { color: theme.colors.textPrimary }]}>{t('OK')}</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={[styles.nextButton, { flex: 1 }]} onPress={() => { setShowAlpineModal(false); router.back(); }}>
+                <Text style={styles.nextButtonText}>{t('Voltar ao Início')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -246,15 +324,14 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
   },
   content: {
     paddingHorizontal: 24,
-    paddingTop: 32,
-    paddingBottom: 40,
+    paddingTop: 28,
   },
   stepContainer: {
     flex: 1,
   },
   stepTitle: {
     fontFamily: theme.typography.ui,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     color: theme.colors.textPrimary,
     marginBottom: 24,
@@ -277,6 +354,30 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     marginBottom: 8,
+  },
+  storageNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: theme.colors.bgElevated,
+    borderWidth: 1,
+    borderColor: theme.colors.accentTeal + '35',
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  storageNoticeText: {
+    fontFamily: theme.typography.ui,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+  },
+  storagePath: {
+    fontFamily: theme.typography.mono,
+    fontSize: 12,
+    color: theme.colors.accentTeal,
+    marginTop: 6,
   },
   helperText: {
     fontFamily: theme.typography.ui,
@@ -374,5 +475,35 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.textSecondary,
     marginTop: 16,
     textAlign: 'center',
-  }
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: theme.colors.bgElevated,
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  modalTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 20,
+    color: theme.colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalDesc: {
+    fontFamily: theme.typography.ui,
+    fontSize: 15,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
 });

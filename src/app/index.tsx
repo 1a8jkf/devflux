@@ -1,18 +1,34 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { useRouter, useNavigation } from 'expo-router';
-import { Drawer } from 'expo-router/drawer';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Modal, TextInput, Alert, ActivityIndicator, Pressable, useWindowDimensions, KeyboardAvoidingView } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { FileSystemService, ProjectInfo } from '../services/FileSystemService';
+import { FileSystemService, ProjectInfo, FileNode } from '../services/FileSystemService';
 import { LiveSyncService } from '../services/LiveSyncService';
 import { useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TerminalView, TerminalViewRef } from '../components/TerminalView';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const SAF = StorageAccessFramework || null;
+
+const CORE_SETUP_PACKAGES = ['nodejs', 'npm', 'git', 'python3', 'build-base', 'curl', 'wget', 'openssh-client', 'sshpass'];
+const LEGACY_TEST_PROJECT_KEYS = new Set(['teste', 'test', 'projeto', 'projeto teste', 'projeto de teste', 'test project']);
+const FOLDER_PICKER_IGNORED_DIRS = new Set(['node_modules', '.git', '.expo', 'dist', 'build', '.next', '.vinext', '.wrangler']);
+
+const normalizeProjectKey = (value?: string) =>
+  (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+
+const isLegacyTestProject = (project: ProjectInfo) => {
+  const id = normalizeProjectKey(project.id);
+  const name = normalizeProjectKey(project.name);
+  return LEGACY_TEST_PROJECT_KEYS.has(id) || LEGACY_TEST_PROJECT_KEYS.has(name);
+};
 
 const MENU_SECTIONS = [
   {
@@ -21,37 +37,37 @@ const MENU_SECTIONS = [
       { id: 'new', label: 'Novo arquivo', icon: 'FilePlus', shortcut: 'Ctrl+N', route: '/editor/codigo' },
       { id: 'open', label: 'Abrir pasta', icon: 'FolderOpen', shortcut: 'Ctrl+O', route: null },
       { id: 'recent', label: 'Meus Projetos', icon: 'FolderRoot', shortcut: '', route: '/projetos' },
-      { id: 'palette', label: 'Paleta de Comandos', icon: 'Command', shortcut: 'Ctrl+Shift+P', route: null },
+      { id: 'github', label: 'Baixar do GitHub', icon: 'Github', shortcut: '', route: null },
     ]
   },
   {
     title: 'WORKSPACES & SYNC',
     items: [
       { id: 'live-sync', label: 'Live Coding / Sync PC', icon: 'MonitorUp', shortcut: '', route: '/bridge' },
-      { id: 'github', label: 'Conectar GitHub', icon: 'GitBranch', shortcut: '', route: null },
     ]
   },
   {
     title: 'FERRAMENTAS & IA',
     items: [
-      { id: 'ai-chat', label: 'Chat de IA CodeFlex', icon: 'Bot', shortcut: '', route: '/ai-panel' },
+      { id: 'ai-chat', label: 'Chat de IA DevFlux', icon: 'Bot', shortcut: '', route: '/ai-panel' },
       { id: 'ai-api', label: 'Configurar API de IA', icon: 'Key', shortcut: '', route: '/ai-settings' },
       { id: 'database', label: 'Terminal SQL (DB)', icon: 'Database', shortcut: '', route: '/database' },
       { id: 'shell', label: 'Terminal Linux (Shell)', icon: 'Terminal', shortcut: '', route: '/shell' },
+      { id: 'ssh', label: 'Conexão SSH Remota', icon: 'RadioTower', shortcut: '', route: '/ssh' },
+      { id: 'servers', label: 'Servidores Locais', icon: 'Server', shortcut: '', route: '/servers' },
     ]
   },
   {
     title: 'AMBIENTE',
     items: [
       { id: 'settings', label: 'Configurações', icon: 'Settings', shortcut: '', route: '/editor/configuracoes' },
-      { id: 'plugins', label: 'Explorar Plugins', icon: 'Puzzle', shortcut: '', route: null },
     ]
   },
   {
     title: 'RECURSOS',
     items: [
       { id: 'help', label: 'Ajuda', icon: 'HelpCircle', shortcut: '', route: '/ajuda' },
-      { id: 'about', label: 'Sobre o CodeFlex', icon: 'Info', shortcut: '', route: '/sobre' },
+      { id: 'about', label: 'Sobre o DevFlux', icon: 'Info', shortcut: '', route: '/sobre' },
     ]
   }
 ];
@@ -59,66 +75,99 @@ const MENU_SECTIONS = [
 export default function WelcomeScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
+  const { width } = useWindowDimensions();
+  const isWideLayout = width >= 720;
 
   const router = useRouter();
-  const navigation = useNavigation();
 
   const [modalState, setModalState] = React.useState<'closed' | 'open' | 'new-select-project' | 'new-file-name' | 'git-url' | 'duplicate-project-name'>('closed');
   const [selectedProjectId, setSelectedProjectId] = React.useState<string | null>(null);
   const [newFileName, setNewFileName] = React.useState('');
+  const [newFileFolder, setNewFileFolder] = React.useState('');
+  const [projectFolders, setProjectFolders] = React.useState<{ name: string; path: string }[]>([]);
   const [allProjects, setAllProjects] = React.useState<ProjectInfo[]>([]);
   const [gitUrl, setGitUrl] = React.useState('');
   const [isDownloading, setIsDownloading] = React.useState(false);
   const [duplicateName, setDuplicateName] = React.useState('');
-  
-  const [showSetupModal, setShowSetupModal] = React.useState(false);
-  const [setupRunning, setSetupRunning] = React.useState(false);
-  const setupTerminalRef = React.useRef<TerminalViewRef>(null);
-  const [alpineInstalled, setAlpineInstalled] = React.useState<boolean | null>(null);
-  const [setupStep, setSetupStep] = React.useState<1 | 2>(1);
-  const [setupLog, setSetupLog] = React.useState('');
-  const [selectedSetupPackages, setSelectedSetupPackages] = React.useState<string[]>(['nodejs', 'npm', 'git']);
+  const [projectOptions, setProjectOptions] = React.useState<ProjectInfo | null>(null);
 
-  const OPTIONAL_PACKAGES = [
-    { id: 'nodejs', label: 'Node.js', desc: 'Runtime JavaScript' },
-    { id: 'npm', label: 'NPM', desc: 'Gerenciador de pacotes' },
-    { id: 'git', label: 'Git', desc: 'Controle de versão' },
-    { id: 'python3', label: 'Python 3', desc: 'Linguagem de programação' },
-    { id: 'build-base', label: 'Build Tools', desc: 'gcc, make, etc.' },
-    { id: 'curl', label: 'cURL', desc: 'Transferência de dados' },
-    { id: 'wget', label: 'Wget', desc: 'Download de arquivos' },
-    { id: 'nano', label: 'Nano', desc: 'Editor de texto' },
-    { id: 'vim', label: 'Vim', desc: 'Editor avançado' },
-    { id: 'openssh', label: 'OpenSSH', desc: 'Cliente SSH' },
-  ];
+  const [ghToken, setGhToken] = React.useState('');
+  const [ghRepos, setGhRepos] = React.useState<any[]>([]);
+  const [isGhLoading, setIsGhLoading] = React.useState(false);
+  const [hasGhToken, setHasGhToken] = React.useState(false);
 
-  const toggleSetupPackage = (pkgId: string) => {
-    setSelectedSetupPackages(prev =>
-      prev.includes(pkgId) ? prev.filter(p => p !== pkgId) : [...prev, pkgId]
-    );
+  const loadGhRepos = async (tokenStr: string) => {
+    setIsGhLoading(true);
+    try {
+      const { GithubService } = await import('../services/GithubService');
+      await GithubService.setToken(tokenStr);
+      const repos = await GithubService.getRepos();
+      setGhRepos(repos);
+      setHasGhToken(true);
+      setGhToken(tokenStr);
+    } catch (e: any) {
+      Alert.alert(t('Erro'), t('Falha ao autenticar ou buscar repositórios.'));
+      setHasGhToken(false);
+    } finally {
+      setIsGhLoading(false);
+    }
   };
 
-  const handleProjectOptions = (projectId: string, projectName: string) => {
-    Alert.alert(
-      'Opções do Projeto',
-      projectName,
-      [
-        { text: 'Duplicar', onPress: () => {
-           setSelectedProjectId(projectId);
-           setDuplicateName(projectName + ' (Cópia)');
-           setModalState('duplicate-project-name');
-        } },
-        { text: 'Excluir', style: 'destructive', onPress: () => {
-           Alert.alert('Confirmar Exclusão', 'Tem certeza que deseja excluir este projeto?', [
-             { text: 'Cancelar', style: 'cancel' },
-             { text: 'Excluir', style: 'destructive', onPress: async () => {
-                await FileSystemService.deleteProject(projectId);
-             }}
-           ]);
-        } },
-        { text: 'Cancelar', style: 'cancel' }
-      ]
-    );
+
+
+
+  const normalizeRelativePath = React.useCallback((value: string) => {
+    return String(value || '')
+      .replace(/\\/g, '/')
+      .split('/')
+      .map(part => part.trim())
+      .filter(part => part && part !== '.' && part !== '..')
+      .join('/');
+  }, []);
+
+  const collectProjectFolders = React.useCallback((nodes: FileNode[], parentPath = ''): { name: string; path: string }[] => {
+    const folders: { name: string; path: string }[] = [];
+    for (const node of nodes) {
+      if (node.type !== 'directory') continue;
+      if (FOLDER_PICKER_IGNORED_DIRS.has(node.name)) continue;
+      const fullPath = normalizeRelativePath(parentPath ? `${parentPath}/${node.name}` : (node.path || node.name));
+      folders.push({ name: node.name, path: fullPath });
+      if (node.children?.length) {
+        folders.push(...collectProjectFolders(node.children, fullPath));
+      }
+    }
+    return folders;
+  }, [normalizeRelativePath]);
+
+  const loadNewFileFolders = React.useCallback(async (projectId: string) => {
+    const rootFolder = { name: t('Raiz do Projeto'), path: '' };
+    setNewFileFolder('');
+    try {
+      const tree = await FileSystemService.getProjectFileTree(projectId);
+      setProjectFolders([rootFolder, ...collectProjectFolders(tree)]);
+    } catch (error) {
+      setProjectFolders([rootFolder]);
+    }
+  }, [collectProjectFolders, t]);
+
+  const handleProjectOptions = (project: ProjectInfo) => {
+    setProjectOptions(project);
+  };
+
+  const handleDuplicateProjectOption = () => {
+    if (!projectOptions) return;
+    setSelectedProjectId(projectOptions.id);
+    setDuplicateName(projectOptions.name + ' (' + t('Cópia') + ')');
+    setProjectOptions(null);
+    setModalState('duplicate-project-name');
+  };
+
+  const handleDeleteProjectOption = async () => {
+    if (!projectOptions) return;
+    const projectId = projectOptions.id;
+    setProjectOptions(null);
+    await FileSystemService.deleteProject(projectId);
   };
 
 
@@ -131,8 +180,10 @@ export default function WelcomeScreen() {
         setAllProjects(data);
         setModalState('new-select-project');
       } catch (e) {
-        Alert.alert('Erro', 'Não foi possível carregar os projetos.');
+        Alert.alert(t('Erro'), t('Não foi possível carregar os projetos.'));
       }
+    } else if (id === 'github') {
+      router.push('/github/repos');
     } else if (id === 'open') {
       if (Platform.OS === 'web') {
         try {
@@ -145,19 +196,19 @@ export default function WelcomeScreen() {
             if (files && files.length > 0) {
               const firstFile = files[0];
               const folderName = firstFile.webkitRelativePath.split('/')[0] || 'Imported_Project';
-              
+
               const projectInfo = await FileSystemService.createEmptyProject(folderName, 'html');
               const projectId = projectInfo.id;
-              
+
               const maxFiles = Math.min(files.length, 50);
               for (let i = 0; i < maxFiles; i++) {
                 const file = files[i];
                 if (file.name.includes('.DS_Store') || file.webkitRelativePath.includes('node_modules')) continue;
-                
+
                 const relativePath = file.webkitRelativePath.substring(folderName.length + 1);
                 if (relativePath) {
                    const text = await file.text().catch(() => '');
-                   
+
                    const parts = relativePath.split('/');
                    if (parts.length > 1) {
                      let cur = '';
@@ -169,7 +220,7 @@ export default function WelcomeScreen() {
                    await FileSystemService.writeFile(projectId, relativePath, text);
                 }
               }
-              
+
               router.push({ pathname: '/editor/codigo', params: { projectId } });
             }
           };
@@ -182,7 +233,7 @@ export default function WelcomeScreen() {
       } else {
         // Android: Request SAF directory permission to browse folders
         if (!SAF) {
-          Alert.alert('Indisponível', 'Acesso a pastas externas não é suportado nesta versão.');
+          Alert.alert(t('Indisponível'), t('Acesso a pastas externas não é suportado nesta versão.'));
           return;
         }
         try {
@@ -199,27 +250,25 @@ export default function WelcomeScreen() {
                  }
                  folderName = lastPart;
               } catch(e) {}
-              
+
               const projectId = await FileSystemService.importSAFDirectory(permissions.directoryUri, folderName);
               router.push({ pathname: '/editor/codigo', params: { projectId } });
             } catch (importError: any) {
-              Alert.alert('Erro ao importar', importError?.message || 'Falha ao importar a pasta selecionada.');
+              Alert.alert(t('Erro ao importar'), importError?.message || t('Falha ao importar a pasta selecionada.'));
             } finally {
               setIsDownloading(false);
             }
           } else {
             Alert.alert(
-              'Permissão Necessária',
-              'Para abrir pastas do seu dispositivo, você precisa conceder permissão de acesso ao armazenamento. Toque em "Abrir Pasta" novamente e selecione uma pasta.',
-              [{ text: 'OK' }]
+              t('Permissão Necessária'),
+              t('Para abrir pastas do seu dispositivo, você precisa conceder permissão de acesso ao armazenamento. Toque em "Abrir Pasta" novamente e selecione uma pasta.'),
+              [{ text: t('OK') }]
             );
           }
         } catch(e: any) {
-          Alert.alert('Erro', e?.message || 'Não foi possível acessar o armazenamento.');
+          Alert.alert(t('Erro'), e?.message || t('Não foi possível acessar o armazenamento.'));
         }
       }
-    } else if (id === 'github') {
-      (navigation as any).openDrawer();
     } else if (route === '/ai-panel') {
       const syncId = LiveSyncService.syncProjectId;
       if (syncId) {
@@ -232,22 +281,29 @@ export default function WelcomeScreen() {
     }
   };
 
-  const handleProjectSelect = (projectId: string) => {
+  const handleProjectSelect = async (projectId: string) => {
     if (modalState === 'open') {
       setModalState('closed');
       router.push({ pathname: '/editor/codigo', params: { projectId } });
     } else if (modalState === 'new-select-project') {
       setSelectedProjectId(projectId);
+      await loadNewFileFolders(projectId);
       setModalState('new-file-name');
     }
   };
 
   const handleCreateFile = async () => {
     if (!selectedProjectId || !newFileName.trim()) return;
-    await FileSystemService.writeFile(selectedProjectId, newFileName.trim(), '');
+    const cleanName = normalizeRelativePath(newFileName.trim());
+    const cleanFolder = normalizeRelativePath(newFileFolder);
+    if (!cleanName) return;
+    const targetPath = cleanFolder ? `${cleanFolder}/${cleanName}` : cleanName;
+    await FileSystemService.writeFile(selectedProjectId, targetPath, '');
     setModalState('closed');
-    const params = { projectId: selectedProjectId, openFile: newFileName.trim() };
+    const params = { projectId: selectedProjectId, openFile: targetPath };
     setNewFileName('');
+    setNewFileFolder('');
+    setProjectFolders([]);
     router.push({ pathname: '/editor/codigo', params });
   };
 
@@ -260,25 +316,33 @@ export default function WelcomeScreen() {
       setGitUrl('');
       router.push({ pathname: '/editor/codigo', params: { projectId } });
     } catch (e: any) {
-      alert(e.message || 'Erro ao baixar o repositório');
+      alert(e.message || t('Erro ao baixar o repositório'));
     } finally {
       setIsDownloading(false);
     }
   };
 
   const [recentProjects, setRecentProjects] = React.useState<ProjectInfo[]>([]);
-  const [syncProject, setSyncProject] = React.useState<ProjectInfo | null>(null);
   const [isLiveSyncActive, setIsLiveSyncActive] = React.useState(false);
-  const [syncIp, setSyncIp] = React.useState('');
+  const [searchQuery, setSearchQuery] = React.useState('');
+
+  const isSyncProject = React.useCallback((project: ProjectInfo) => {
+    return project.type === 'sync' || project.id === 'live-sync-workspace' || project.name === 'LiveSync Workspace';
+  }, []);
+
+  const displayedProjects = searchQuery.trim()
+    ? allProjects.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : recentProjects;
 
   useFocusEffect(
     React.useCallback(() => {
       const load = async () => {
-        const data = await FileSystemService.getProjects();
-        const syncProj = data.find(p => p.name === 'LiveSync Workspace');
-        const normalProjs = data.filter(p => p.name !== 'LiveSync Workspace');
-        setSyncProject(syncProj || null);
-        
+        let data = await FileSystemService.getProjects();
+
+        setAllProjects(data);
+        const syncProj = data.find(isSyncProject);
+        const normalProjs = data.filter(p => !isSyncProject(p));
+
         // Put sync proj first in recent if it exists
         if (syncProj) {
           setRecentProjects([syncProj, ...normalProjs].slice(0, 3));
@@ -288,29 +352,11 @@ export default function WelcomeScreen() {
       };
       load();
 
-      const checkSetup = async () => {
-        try {
-          const done = await AsyncStorage.getItem('devflux_alpine_installed');
-          if (done === 'true') {
-            setAlpineInstalled(true);
-          } else {
-            setAlpineInstalled(false);
-            setShowSetupModal(true);
-          }
-        } catch(e) {
-          setShowSetupModal(true);
-        }
-      };
-      checkSetup();
-
       const unsubscribeLiveSync = LiveSyncService.subscribe(() => {
         if (LiveSyncService.ws?.readyState === WebSocket.OPEN) {
           setIsLiveSyncActive(true);
-          const url = LiveSyncService.ws.url;
-          setSyncIp(url.replace('ws://', ''));
         } else {
           setIsLiveSyncActive(false);
-          setSyncIp('');
         }
         // Also reload projects when LiveSync status changes (project may have been created)
         load();
@@ -325,171 +371,139 @@ export default function WelcomeScreen() {
     }, [])
   );
 
+
+
   const formatTime = (ms: number) => {
     const diff = Date.now() - ms;
     const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m atrás`;
+    if (mins < 60) return t('time.minutesAgo', '{value}m ago').replace('{value}', String(mins));
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h atrás`;
-    return `${Math.floor(hours / 24)}d atrás`;
+    if (hours < 24) return t('time.hoursAgo', '{value}h ago').replace('{value}', String(hours));
+    return t('time.daysAgo', '{value}d ago').replace('{value}', String(Math.floor(hours / 24)));
   };
 
-  const handleStartSetup = async () => {
-    setSetupRunning(true);
-    setSetupLog('⏳ Instalando Alpine Linux (offline)...\n');
-    try {
-      const { NodeRunner } = await import('../utils/nodeRunner');
-      await NodeRunner.init();
-      const nodejs = require('nodejs-mobile-react-native');
-      
-      const logListener = (msg: string) => {
-        try {
-          const data = JSON.parse(msg);
-          if (data.type === 'LINUX_INSTALL_LOG') {
-            setSetupLog(prev => prev + data.payload);
-          } else if (data.type === 'LINUX_INSTALL_DONE') {
-            setSetupLog(prev => prev + '\n✅ Alpine Linux instalado com sucesso!\n');
-            setAlpineInstalled(true);
-            AsyncStorage.setItem('devflux_alpine_installed', 'true');
-            setSetupStep(2);
-            setSetupRunning(false);
-          } else if (data.type === 'LINUX_INSTALL_ERROR') {
-            setSetupLog(prev => prev + `\n❌ Erro: ${data.payload}\n`);
-            setSetupRunning(false);
-          }
-        } catch(e) {}
-      };
-      nodejs.channel.addListener('message', logListener);
-      nodejs.channel.send(JSON.stringify({ type: 'LINUX_INSTALL', packages: [] }));
-    } catch(e) {
-      setSetupLog(prev => prev + `\n❌ Erro de conexão: ${(e as any)?.message}\n`);
-      setSetupRunning(false);
-    }
-  };
-
-  const handleInstallPackages = async () => {
-    if (selectedSetupPackages.length === 0) {
-      handleFinishSetup();
-      return;
-    }
-    setSetupRunning(true);
-    setSetupLog('📦 Instalando pacotes selecionados...\n(Necessário conexão com a internet)\n\n');
-    try {
-      const { NodeRunner } = await import('../utils/nodeRunner');
-      await NodeRunner.init();
-      const nodejs = require('nodejs-mobile-react-native');
-      const logListener = (msg: string) => {
-        try {
-          const data = JSON.parse(msg);
-          if (data.type === 'LINUX_INSTALL_LOG') {
-            setSetupLog(prev => prev + data.payload);
-          } else if (data.type === 'LINUX_INSTALL_DONE') {
-            setSetupLog(prev => prev + '\n✅ Todos os pacotes instalados!\n');
-            setSetupRunning(false);
-            setTimeout(() => handleFinishSetup(), 1500);
-          } else if (data.type === 'LINUX_INSTALL_ERROR') {
-            setSetupLog(prev => prev + `\n❌ Erro: ${data.payload}\n`);
-            setSetupRunning(false);
-          }
-        } catch(e) {}
-      };
-      nodejs.channel.addListener('message', logListener);
-      nodejs.channel.send(JSON.stringify({ type: 'LINUX_INSTALL', packages: selectedSetupPackages }));
-    } catch(e) {
-      setSetupLog(prev => prev + `\n❌ Erro: ${(e as any)?.message}\n`);
-      setSetupRunning(false);
-    }
-  };
-
-  const handleFinishSetup = async () => {
-    await AsyncStorage.setItem('devflux_alpine_installed', 'true');
-    setAlpineInstalled(true);
-    setShowSetupModal(false);
-    setSetupStep(1);
-    setSetupRunning(false);
-    setSetupLog('');
+  const SurfacePressable = ({ children, style, onPress, disabled = false }: { children: React.ReactNode; style?: any; onPress?: () => void; disabled?: boolean }) => {
+    const [hovered, setHovered] = React.useState(false);
+    return (
+      <Pressable
+        disabled={disabled}
+        onPress={onPress}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        style={({ pressed }) => [
+          style,
+          hovered && styles.hoverSurface,
+          pressed && styles.pressSurface,
+          disabled && { opacity: 0.5 },
+        ]}
+      >
+        {children}
+      </Pressable>
+    );
   };
 
   return (
     <>
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        
+      <ScrollView style={styles.container} contentContainerStyle={[styles.content, isWideLayout && styles.contentWide]}>
 
+        <View style={[styles.commandSearch, { marginTop: 24, marginBottom: 16 }]}>
+          <Icon name="Search" size={16} color={theme.colors.textSecondary} />
+          <TextInput
+            style={[styles.commandSearchText, { flex: 1, padding: 0, outlineStyle: 'none' } as any]}
+            placeholder={t('Buscar projetos...')}
+            placeholderTextColor={theme.colors.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>PROJETOS RECENTES</Text>
-          <View style={styles.recentProjectsContainer}>
-            {recentProjects.length === 0 ? (
-              <Text style={{ color: theme.colors.textSecondary, padding: 12, fontFamily: theme.typography.ui }}>Nenhum projeto ainda. Crie um novo!</Text>
+          <Text style={styles.sectionTitle}>{searchQuery.trim() ? t('RESULTADOS DA BUSCA') : t('PROJETOS RECENTES')}</Text>
+          <View style={[styles.recentProjectsContainer, isWideLayout && styles.recentProjectsGrid]}>
+            {displayedProjects.length === 0 ? (
+              <Text style={{ color: theme.colors.textSecondary, padding: 12, fontFamily: theme.typography.ui }}>{searchQuery.trim() ? t('Nenhum projeto encontrado.') : t('Nenhum projeto ainda. Crie um novo!')}</Text>
             ) : (
-              recentProjects.map(proj => (
-                <TouchableOpacity key={proj.id} style={styles.recentProjectCard} onPress={() => router.push({ pathname: '/editor/codigo', params: { projectId: proj.id } })}>
+              displayedProjects.map(proj => (
+                <SurfacePressable key={proj.id} style={[styles.recentProjectCard, isWideLayout && styles.recentProjectCardWide]} onPress={() => router.push({ pathname: '/editor/codigo', params: { projectId: proj.id } })}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <View style={styles.recentIconBox}>
                       <Icon name={proj.type === 'node' ? 'Server' : proj.type === 'react' ? 'Layout' : 'Globe'} size={16} color={theme.colors.accentBlue} />
                     </View>
-                    {proj.name !== 'LiveSync Workspace' && (
-                      <TouchableOpacity onPress={() => handleProjectOptions(proj.id, proj.name)} style={{ padding: 4 }}>
+                    {!isSyncProject(proj) && (
+                      <TouchableOpacity onPress={() => handleProjectOptions(proj)} style={{ padding: 4 }}>
                         <Icon name="MoreHorizontal" size={16} color={theme.colors.textSecondary} />
                       </TouchableOpacity>
                     )}
                   </View>
                   <View style={styles.recentInfo}>
                     <Text style={styles.recentName} numberOfLines={1}>{proj.name}</Text>
-                    {proj.name === 'LiveSync Workspace' ? (
+                    {isSyncProject(proj) ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                         <View style={{ backgroundColor: theme.colors.success + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 8 }}>
                           <Text style={{ color: theme.colors.success, fontSize: 10, fontFamily: theme.typography.uiBold }}>SYNC CODE</Text>
                         </View>
-                        <Text style={[styles.recentMeta, { marginTop: 0 }]}>{isLiveSyncActive ? 'Online' : 'Offline'}</Text>
+                        <Text style={[styles.recentMeta, { marginTop: 0 }]}>{isLiveSyncActive ? t('Online') : t('Offline')}</Text>
                       </View>
                     ) : (
                       <Text style={styles.recentMeta}>{proj.type.toUpperCase()} • {formatTime(proj.updatedAt)}</Text>
                     )}
                   </View>
-                </TouchableOpacity>
+                </SurfacePressable>
               ))
             )}
           </View>
         </View>
 
-        {MENU_SECTIONS.map((section, idx) => (
-        <View key={idx} style={styles.section}>
-          <Text style={styles.sectionTitle}>{section.title}</Text>
-          <View style={styles.sectionItems}>
-            {section.items.map(item => (
-              <TouchableOpacity 
-                key={item.id} 
-                style={styles.menuItem}
-                onPress={() => handlePress(item.id, item.route)}
-              >
-                <View style={styles.menuLeft}>
-                  <Icon name={item.icon as any} size={16} color={theme.colors.textSecondary} />
-                  <Text style={styles.menuLabel}>{item.label}</Text>
+        {!searchQuery.trim() && (
+          <View style={[styles.menuGrid, isWideLayout && styles.menuGridWide]}>
+            {MENU_SECTIONS.map((section, idx) => (
+              <View key={idx} style={[styles.section, isWideLayout && styles.menuSectionCard]}>
+                <Text style={styles.sectionTitle}>{t(section.title)}</Text>
+                <View style={styles.sectionItems}>
+                  {section.items.map(item => (
+                    <SurfacePressable
+                      key={item.id}
+                      style={styles.menuItem}
+                      onPress={() => handlePress(item.id, item.route)}
+                    >
+                      <View style={styles.menuLeft}>
+                        <View style={styles.menuIconBox}>
+                          <Icon name={item.icon as any} size={16} color={theme.colors.textSecondary} />
+                        </View>
+                        <Text style={styles.menuLabel}>{t(item.label)}</Text>
+                      </View>
+                      {item.id === 'live-sync' ? (
+                        <Text style={[styles.shortcutText, { color: isLiveSyncActive ? theme.colors.success : theme.colors.textSecondary, fontFamily: theme.typography.uiBold }]}>
+                          {isLiveSyncActive ? t('Conectado') : t('Desconectado')}
+                        </Text>
+                      ) : !!item.shortcut && (
+                        <Text style={styles.shortcutText}>{item.shortcut}</Text>
+                      )}
+                    </SurfacePressable>
+                  ))}
                 </View>
-                {item.id === 'live-sync' ? (
-                  <Text style={[styles.shortcutText, { color: isLiveSyncActive ? theme.colors.success : theme.colors.textSecondary, fontFamily: theme.typography.uiBold }]}>
-                    {isLiveSyncActive ? 'Conectado' : 'Desconectado'}
-                  </Text>
-                ) : !!item.shortcut && (
-                  <Text style={styles.shortcutText}>{item.shortcut}</Text>
-                )}
-              </TouchableOpacity>
+              </View>
             ))}
           </View>
-        </View>
-      ))}
+        )}
     </ScrollView>
 
     <Modal visible={modalState !== 'closed'} transparent animationType="slide">
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {modalState === 'open' ? 'Abrir Pasta' : 
-               modalState === 'new-select-project' ? 'Selecione o Projeto' : 
-               modalState === 'git-url' ? 'Baixar do GitHub' : 'Nome do Arquivo'}
+              {modalState === 'open' ? t('Abrir Pasta') :
+               modalState === 'new-select-project' ? t('Selecione o Projeto') :
+               modalState === 'git-url' ? t('Baixar do GitHub') : t('Nome do Arquivo')}
             </Text>
             <TouchableOpacity onPress={() => setModalState('closed')}>
               <Icon name="X" size={24} color={theme.colors.textSecondary} />
@@ -497,7 +511,7 @@ export default function WelcomeScreen() {
           </View>
 
           {(modalState === 'open' || modalState === 'new-select-project') && (
-            <View style={{ paddingHorizontal: 20 }}>
+            <ScrollView style={{ maxHeight: 400 }} contentContainerStyle={{ paddingHorizontal: 20 }} keyboardShouldPersistTaps="handled">
               {modalState === 'new-select-project' && (
                 <>
                   <TouchableOpacity style={styles.projectCard} onPress={() => {
@@ -508,47 +522,21 @@ export default function WelcomeScreen() {
                       <Icon name="FolderPlus" size={24} color={theme.colors.accentPurple} />
                     </View>
                     <View style={styles.projectInfo}>
-                      <Text style={styles.projectName}>Criar Novo Projeto</Text>
-                      <Text style={styles.projectMeta}>Comece do zero</Text>
+                      <Text style={styles.projectName}>{t('Criar Novo Projeto')}</Text>
+                      <Text style={styles.projectMeta}>{t('Comece do zero')}</Text>
                     </View>
                   </TouchableOpacity>
 
-                  <TouchableOpacity style={styles.projectCard} onPress={async () => {
+                  <TouchableOpacity style={[styles.projectCard, styles.githubProjectCard]} onPress={() => {
                     setModalState('closed');
-                    if (!SAF) {
-                      Alert.alert('Indisponível', 'Acesso a pastas externas não é suportado nesta versão.');
-                      return;
-                    }
-                    try {
-                      const permissions = await SAF.requestDirectoryPermissionsAsync();
-                      if (permissions.granted) {
-                        let folderName = 'Novo_Projeto_Android';
-                        try {
-                           folderName = decodeURIComponent(permissions.directoryUri.split('%2F').pop() || 'Novo_Projeto_Android');
-                        } catch(e) {}
-                        const projectId = await FileSystemService.createSAFProject(permissions.directoryUri, folderName);
-                        router.push({ pathname: '/editor/codigo', params: { projectId } });
-                      }
-                    } catch(e: any) {
-                      Alert.alert('Erro', e?.message || 'Falha ao criar projeto em pasta externa.');
-                    }
+                    router.push('/github/repos');
                   }}>
-                    <View style={styles.projectIcon}>
-                      <Icon name="FolderPlus" size={24} color={theme.colors.accentGreen || '#4ADE80'} />
-                    </View>
-                    <View style={styles.projectInfo}>
-                      <Text style={styles.projectName}>Criar em Pasta Externa</Text>
-                      <Text style={styles.projectMeta}>Escolha uma pasta do celular</Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.projectCard} onPress={() => setModalState('git-url')}>
-                    <View style={styles.projectIcon}>
+                    <View style={[styles.projectIcon, styles.githubProjectIcon]}>
                       <Icon name="Github" size={24} color={theme.colors.textPrimary} />
                     </View>
                     <View style={styles.projectInfo}>
-                      <Text style={styles.projectName}>Baixar do GitHub</Text>
-                      <Text style={styles.projectMeta}>Clone repositórios como Zip</Text>
+                      <Text style={styles.projectName}>{t('Baixar do GitHub')}</Text>
+                      <Text style={styles.projectMeta}>{t('Clone repositórios como Zip')}</Text>
                     </View>
                   </TouchableOpacity>
                 </>
@@ -564,45 +552,167 @@ export default function WelcomeScreen() {
                   </View>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           )}
 
           {modalState === 'new-file-name' && (
             <View style={{ paddingHorizontal: 20 }}>
+              <Text style={styles.inputLabel}>{t('Nome do arquivo')}</Text>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Nome do arquivo (ex: script.js)"
+                placeholder="index.html"
                 placeholderTextColor={theme.colors.textSecondary}
                 value={newFileName}
                 onChangeText={setNewFileName}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                autoComplete="off"
+                importantForAutofill="no"
+                keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+                disableFullscreenUI
                 autoFocus
               />
-              <TouchableOpacity style={[styles.recentProjectCard, { marginTop: 16, alignItems: 'center' }]} onPress={handleCreateFile}>
-                <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>Criar e Abrir</Text>
+
+              <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('Criar em')}</Text>
+              <View style={styles.folderPickerList}>
+                <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 120 }}>
+                  {projectFolders.map(folder => {
+                    const isSelected = folder.path === newFileFolder;
+                    return (
+                      <TouchableOpacity
+                        key={folder.path || '__project_root'}
+                        style={[styles.folderPickerOption, isSelected && styles.folderPickerOptionActive]}
+                        onPress={() => setNewFileFolder(folder.path)}
+                      >
+                        <Icon name="Folder" size={16} color={isSelected ? theme.colors.accentBlue : theme.colors.textSecondary} />
+                        <Text style={[styles.folderPickerOptionText, isSelected && styles.folderPickerOptionTextActive]} numberOfLines={1}>
+                          {folder.path ? folder.name : t('Raiz do Projeto')}
+                        </Text>
+                        {folder.path ? <Text style={styles.folderPickerPath} numberOfLines={1}>{folder.path}</Text> : null}
+                        {isSelected && <Icon name="Check" size={14} color={theme.colors.accentBlue} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.recentProjectCard, { marginTop: 14, alignItems: 'center' }, !newFileName.trim() && { opacity: 0.5 }]}
+                onPress={handleCreateFile}
+                disabled={!newFileName.trim()}
+              >
+                <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>{t('Criar')}</Text>
               </TouchableOpacity>
             </View>
           )}
 
           {modalState === 'git-url' && (
-            <View style={{ paddingHorizontal: 20 }}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="https://github.com/user/repo"
-                placeholderTextColor={theme.colors.textSecondary}
-                value={gitUrl}
-                onChangeText={setGitUrl}
-                autoCapitalize="none"
-                editable={!isDownloading}
-              />
-              <TouchableOpacity 
-                style={[styles.recentProjectCard, { marginTop: 16, alignItems: 'center' }]} 
-                onPress={handleGitDownload}
-                disabled={isDownloading || !gitUrl}
-              >
-                <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>
-                  {isDownloading ? 'Baixando...' : 'Baixar e Abrir'}
-                </Text>
-              </TouchableOpacity>
+            <View style={{ paddingHorizontal: 20, flex: 1, maxHeight: 500 }}>
+              {!hasGhToken ? (
+                <>
+                  <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('GitHub Personal Access Token (ghp_...)')}</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    placeholderTextColor={theme.colors.textSecondary}
+                    value={ghToken}
+                    onChangeText={setGhToken}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    autoComplete="off"
+                    secureTextEntry
+                  />
+                  <TouchableOpacity
+                    style={[styles.recentProjectCard, { marginTop: 16, alignItems: 'center' }]}
+                    onPress={() => loadGhRepos(ghToken)}
+                    disabled={isGhLoading || !ghToken}
+                  >
+                    <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>
+                      {isGhLoading ? t('Carregando...') : t('Conectar e Listar')}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <View style={{ marginVertical: 16, height: 1, backgroundColor: theme.colors.border }} />
+                  
+                  <Text style={[styles.inputLabel, { marginBottom: 8 }]}>{t('Ou insira a URL do repositório manualmente')}</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="https://github.com/user/repo"
+                    placeholderTextColor={theme.colors.textSecondary}
+                    value={gitUrl}
+                    onChangeText={setGitUrl}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    autoComplete="off"
+                    importantForAutofill="no"
+                    keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+                    disableFullscreenUI
+                    editable={!isDownloading}
+                  />
+                  <TouchableOpacity
+                    style={[styles.recentProjectCard, { marginTop: 16, alignItems: 'center' }]}
+                    onPress={handleGitDownload}
+                    disabled={isDownloading || !gitUrl}
+                  >
+                    <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>
+                      {isDownloading ? t('Baixando...') : t('Baixar URL')}
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <Text style={styles.inputLabel}>{t('Seus Repositórios')}</Text>
+                    <TouchableOpacity onPress={async () => {
+                      const { GithubService } = await import('../services/GithubService');
+                      await GithubService.removeToken();
+                      setHasGhToken(false);
+                      setGhRepos([]);
+                      setGhToken('');
+                    }}>
+                      <Text style={{ color: theme.colors.error, fontSize: 12 }}>{t('Desconectar')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {isGhLoading ? (
+                    <ActivityIndicator size="small" color={theme.colors.accentBlue} />
+                  ) : (
+                    <ScrollView style={{ flex: 1, maxHeight: 300 }}>
+                      {ghRepos.map(repo => (
+                        <TouchableOpacity
+                          key={repo.id}
+                          style={[styles.recentProjectCard, { marginBottom: 8 }]}
+                          onPress={async () => {
+                            setGitUrl(repo.html_url);
+                            setIsDownloading(true);
+                            try {
+                              const projectId = await FileSystemService.downloadGitRepo(repo.html_url);
+                              setModalState('closed');
+                              router.push({ pathname: '/editor/codigo', params: { projectId } });
+                            } catch (e: any) {
+                              Alert.alert(t('Erro'), e.message || t('Erro ao baixar o repositório'));
+                            } finally {
+                              setIsDownloading(false);
+                            }
+                          }}
+                        >
+                          <Text style={{ color: theme.colors.textPrimary, fontWeight: 'bold' }}>{repo.name}</Text>
+                          {repo.description ? (
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>{repo.description}</Text>
+                          ) : null}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                  {isDownloading && (
+                    <View style={{ marginTop: 12, alignItems: 'center' }}>
+                      <Text style={{ color: theme.colors.accentBlue }}>{t('Baixando repositório...')}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           )}
 
@@ -610,10 +720,17 @@ export default function WelcomeScreen() {
             <View style={{ paddingHorizontal: 20 }}>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Nome do projeto duplicado"
+                placeholder={t('Nome do projeto duplicado')}
                 placeholderTextColor={theme.colors.textSecondary}
                 value={duplicateName}
                 onChangeText={setDuplicateName}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                autoComplete="off"
+                importantForAutofill="no"
+                keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+                disableFullscreenUI
                 autoFocus
               />
               <TouchableOpacity style={[styles.recentProjectCard, { marginTop: 16, alignItems: 'center' }]} onPress={async () => {
@@ -621,130 +738,52 @@ export default function WelcomeScreen() {
                 await FileSystemService.duplicateProject(selectedProjectId, duplicateName.trim());
                 setModalState('closed');
               }}>
-                <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>Duplicar Projeto</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontFamily: theme.typography.ui, fontWeight: 'bold' }}>{t('Duplicar Projeto')}</Text>
               </TouchableOpacity>
             </View>
           )}
+
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
-
-    {/* First-Time Setup Modal */}
-    <Modal visible={showSetupModal} transparent animationType="fade">
-      <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.modalContent, { width: '90%', maxHeight: '85%', borderRadius: 16, paddingTop: 20, paddingBottom: 20, paddingHorizontal: 20 }]}>
-          <View style={{ alignItems: 'center', marginBottom: 16 }}>
-            <View style={{ width: 56, height: 56, borderRadius: 14, backgroundColor: theme.colors.accentBlue + '20', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-              <Icon name={setupStep === 1 ? 'Terminal' : 'Package'} size={28} color={theme.colors.accentBlue} />
+    <Modal visible={!!projectOptions} transparent animationType="fade">
+      <View style={styles.projectOptionsOverlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setProjectOptions(null)} />
+        <View style={styles.projectOptionsCard}>
+          <View style={styles.projectOptionsHandle} />
+          <View style={styles.projectOptionsHeader}>
+            <View style={styles.projectOptionsIcon}>
+              <Icon name={projectOptions?.type === 'node' ? 'Server' : projectOptions?.type === 'react' ? 'Layout' : 'Globe'} size={22} color={theme.colors.accentBlue} />
             </View>
-            <Text style={{ fontFamily: theme.typography.ui, fontSize: 20, fontWeight: 'bold', color: theme.colors.textPrimary, textAlign: 'center', marginBottom: 6 }}>
-              {setupStep === 1 ? 'Instalar Alpine Linux' : 'Dependências Opcionais'}
-            </Text>
-            <Text style={{ fontFamily: theme.typography.ui, fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
-              {setupStep === 1
-                ? 'O Alpine Linux será extraído localmente (sem necessidade de internet). Este passo é obrigatório para usar o terminal e criar projetos.'
-                : 'Selecione os pacotes globais que deseja instalar no terminal Alpine. Você pode pular e fazer isso depois se não tiver internet.'}
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.projectOptionsTitle}>{t('Opções do Projeto')}</Text>
+              <Text style={styles.projectOptionsName} numberOfLines={1}>{projectOptions?.name}</Text>
+            </View>
+            <TouchableOpacity style={styles.projectOptionsClose} onPress={() => setProjectOptions(null)}>
+              <Icon name="X" size={18} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
           </View>
 
-          {/* Step 1: Alpine Installation */}
-          {setupStep === 1 && (
-            <>
-              {setupLog ? (
-                <ScrollView style={{ maxHeight: 180, backgroundColor: '#0D0D0D', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-                  <Text style={{ fontFamily: theme.typography.mono, fontSize: 11, color: '#A0AEC0', lineHeight: 18 }}>{setupLog}</Text>
-                </ScrollView>
-              ) : null}
+          <TouchableOpacity style={styles.projectOptionAction} onPress={handleDuplicateProjectOption}>
+            <View style={[styles.projectOptionActionIcon, { backgroundColor: theme.colors.accentBlue + '18' }]}>
+              <Icon name="Copy" size={18} color={theme.colors.accentBlue} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.projectOptionActionTitle}>{t('Duplicar')}</Text>
+              <Text style={styles.projectOptionActionSub}>{t('Criar uma cópia local deste projeto')}</Text>
+            </View>
+          </TouchableOpacity>
 
-              <View style={{ flexDirection: 'row', gap: 12 }}>
-                <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.bgSurface, alignItems: 'center' }}
-                  onPress={handleFinishSetup}
-                  disabled={setupRunning}
-                >
-                  <Text style={{ fontFamily: theme.typography.ui, color: setupRunning ? theme.colors.textSecondary : theme.colors.textPrimary, fontWeight: 'bold' }}>Pular</Text>
-                </TouchableOpacity>
-                {!setupRunning && (
-                  <TouchableOpacity
-                    style={{ flex: 2, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.accentBlue, alignItems: 'center' }}
-                    onPress={handleStartSetup}
-                  >
-                    <Text style={{ fontFamily: theme.typography.ui, color: '#fff', fontWeight: 'bold' }}>Instalar Alpine Linux</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </>
-          )}
-
-          {/* Step 2: Optional Packages Checklist */}
-          {setupStep === 2 && (
-            <>
-              {setupRunning && setupLog ? (
-                <ScrollView style={{ maxHeight: 180, backgroundColor: '#0D0D0D', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-                  <Text style={{ fontFamily: theme.typography.mono, fontSize: 11, color: '#A0AEC0', lineHeight: 18 }}>{setupLog}</Text>
-                </ScrollView>
-              ) : (
-                <ScrollView style={{ maxHeight: 260, marginBottom: 16 }}>
-                  {OPTIONAL_PACKAGES.map(pkg => {
-                    const isSelected = selectedSetupPackages.includes(pkg.id);
-                    return (
-                      <TouchableOpacity
-                        key={pkg.id}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          marginBottom: 6,
-                          borderRadius: 8,
-                          backgroundColor: isSelected ? theme.colors.accentBlue + '15' : theme.colors.bgSurface,
-                          borderWidth: 1,
-                          borderColor: isSelected ? theme.colors.accentBlue + '50' : theme.colors.border,
-                        }}
-                        onPress={() => toggleSetupPackage(pkg.id)}
-                      >
-                        <View style={{
-                          width: 22, height: 22, borderRadius: 4,
-                          backgroundColor: isSelected ? theme.colors.accentBlue : 'transparent',
-                          borderWidth: isSelected ? 0 : 1.5,
-                          borderColor: theme.colors.textSecondary,
-                          alignItems: 'center', justifyContent: 'center', marginRight: 12,
-                        }}>
-                          {isSelected && <Icon name="Check" size={14} color="#FFF" />}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontFamily: theme.typography.ui, fontSize: 14, fontWeight: '600', color: theme.colors.textPrimary }}>{pkg.label}</Text>
-                          <Text style={{ fontFamily: theme.typography.ui, fontSize: 11, color: theme.colors.textSecondary, marginTop: 1 }}>{pkg.desc}</Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              )}
-
-              <View style={{ flexDirection: 'row', gap: 12 }}>
-                <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.bgSurface, alignItems: 'center' }}
-                  onPress={handleFinishSetup}
-                  disabled={setupRunning}
-                >
-                  <Text style={{ fontFamily: theme.typography.ui, color: setupRunning ? theme.colors.textSecondary : theme.colors.textPrimary, fontWeight: 'bold' }}>
-                    {setupRunning ? 'Aguarde...' : 'Pular'}
-                  </Text>
-                </TouchableOpacity>
-                {!setupRunning && (
-                  <TouchableOpacity
-                    style={{ flex: 2, paddingVertical: 12, borderRadius: 8, backgroundColor: theme.colors.success, alignItems: 'center' }}
-                    onPress={handleInstallPackages}
-                  >
-                    <Text style={{ fontFamily: theme.typography.ui, color: '#fff', fontWeight: 'bold' }}>
-                      {selectedSetupPackages.length > 0 ? `Instalar (${selectedSetupPackages.length})` : 'Apenas Continuar'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </>
-          )}
+          <TouchableOpacity style={styles.projectOptionAction} onPress={handleDeleteProjectOption}>
+            <View style={[styles.projectOptionActionIcon, { backgroundColor: theme.colors.error + '18' }]}>
+              <Icon name="Trash2" size={18} color={theme.colors.error} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.projectOptionActionTitle, { color: theme.colors.error }]}>{t('Excluir')}</Text>
+              <Text style={styles.projectOptionActionSub}>{t('Remover a pasta local do app')}</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -759,11 +798,304 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     backgroundColor: theme.colors.bgPrimary, // now #000000
   },
   content: {
-    paddingVertical: 40,
-    paddingHorizontal: 24,
+    paddingVertical: 34,
+    paddingHorizontal: 18,
+  },
+  contentWide: {
+    width: '100%',
+    maxWidth: 1040,
+    alignSelf: 'center',
+    paddingHorizontal: 28,
+  },
+  homeIntro: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.bgElevated,
+    padding: 16,
+    marginBottom: 18,
+  },
+  homeIntroWide: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'stretch',
+    padding: 18,
+  },
+  homeIntroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  statusPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    minHeight: 28,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: theme.colors.bgSurface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginBottom: 14,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+  },
+  homeIntroTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 24,
+    lineHeight: 29,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+  },
+  homeIntroText: {
+    maxWidth: 540,
+    fontFamily: theme.typography.ui,
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.colors.textSecondary,
+  },
+  homeIntroActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 16,
+  },
+  primaryMiniAction: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 9,
+    paddingHorizontal: 13,
+    backgroundColor: theme.colors.textPrimary,
+  },
+  primaryMiniActionText: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 12,
+    color: theme.colors.bgPrimary,
+  },
+  secondaryMiniAction: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 9,
+    paddingHorizontal: 13,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.bgSurface,
+  },
+  secondaryMiniActionText: {
+    fontFamily: theme.typography.mono,
+    fontSize: 12,
+    color: theme.colors.textPrimary,
+  },
+  workbenchPreview: {
+    flex: 1.1,
+    minWidth: 420,
+    minHeight: 178,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.bgPrimary,
+  },
+  previewRail: {
+    width: 38,
+    alignItems: 'center',
+    gap: 16,
+    paddingTop: 14,
+    backgroundColor: theme.colors.bgSurface,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  previewTree: {
+    width: 122,
+    padding: 12,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  previewTreeTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 11,
+    color: theme.colors.textPrimary,
+    marginBottom: 12,
+  },
+  previewTreeItem: {
+    fontFamily: theme.typography.ui,
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginBottom: 7,
+  },
+  previewTreeFile: {
+    fontFamily: theme.typography.mono,
+    fontSize: 10,
+    color: theme.colors.textPrimary,
+    marginLeft: 10,
+    marginBottom: 6,
+  },
+  previewEditor: {
+    flex: 1,
+    minWidth: 0,
+  },
+  previewTabs: {
+    height: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  previewTabActive: {
+    height: 30,
+    paddingHorizontal: 12,
+    textAlignVertical: 'center',
+    fontFamily: theme.typography.uiBold,
+    fontSize: 10,
+    color: theme.colors.textPrimary,
+    backgroundColor: theme.colors.bgElevated,
+  },
+  previewTab: {
+    paddingHorizontal: 12,
+    fontFamily: theme.typography.ui,
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+  },
+  previewCode: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    gap: 8,
+  },
+  previewCodeLine: {
+    fontFamily: theme.typography.mono,
+    fontSize: 11,
+    color: theme.colors.textPrimary,
+  },
+  previewCodeMuted: {
+    fontFamily: theme.typography.mono,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+  },
+  previewStatusBar: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  previewStatusText: {
+    fontFamily: theme.typography.mono,
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+  },
+  previewAssistant: {
+    width: 96,
+    padding: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: theme.colors.border,
+    backgroundColor: theme.colors.bgSurface,
+  },
+  previewAssistantTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 10,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+  },
+  previewAssistantText: {
+    fontFamily: theme.typography.ui,
+    fontSize: 10,
+    lineHeight: 14,
+    color: theme.colors.textSecondary,
+  },
+  homeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  homeHeaderWide: {
+    marginBottom: 18,
+  },
+  brandLockup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: theme.colors.bgSurface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandTitle: {
+    fontFamily: theme.typography.mono,
+    fontSize: 16,
+    color: theme.colors.textPrimary,
+    fontWeight: '700',
+  },
+  brandSub: {
+    fontFamily: theme.typography.ui,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  deviceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 32,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.bgElevated,
+  },
+  deviceBadgeText: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+  },
+  commandSearch: {
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: theme.colors.bgElevated,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 13,
+    marginBottom: 24,
+    gap: 10,
+  },
+  commandSearchText: {
+    flex: 1,
+    fontFamily: theme.typography.ui,
+    color: theme.colors.textSecondary,
+    fontSize: 13,
+  },
+  commandSearchShortcut: {
+    fontFamily: theme.typography.mono,
+    color: theme.colors.textSecondary,
+    fontSize: 11,
+    opacity: 0.7,
   },
   section: {
-    marginBottom: 32,
+    marginBottom: 28,
   },
   sectionTitle: {
     fontSize: 10,
@@ -777,19 +1109,50 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
   sectionItems: {
     backgroundColor: 'transparent',
   },
+  menuGrid: {
+    width: '100%',
+  },
+  menuGridWide: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
+  menuSectionCard: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    minWidth: 300,
+    marginBottom: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.bgElevated,
+  },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    minHeight: 46,
+    paddingVertical: 10,
     paddingHorizontal: 8,
+    borderRadius: 9,
   },
   menuLeft: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  menuIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.bgSurface,
   },
   menuLabel: {
-    marginLeft: 12,
+    marginLeft: 10,
     fontSize: 14,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.ui,
@@ -800,16 +1163,32 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   recentProjectsContainer: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 12,
+  },
+  recentProjectsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
   recentProjectCard: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: theme.colors.bgElevated,
     borderRadius: 12,
-    padding: 12,
+    padding: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
+  },
+  recentProjectCardWide: {
+    flexBasis: '31%',
+    minWidth: 220,
+  },
+  hoverSurface: {
+    backgroundColor: theme.colors.bgSurface,
+    borderColor: '#2A2A2A',
+  },
+  pressSurface: {
+    opacity: 0.78,
   },
   recentIconBox: {
     width: 32,
@@ -847,6 +1226,91 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 40,
   },
+  projectOptionsOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  projectOptionsCard: {
+    backgroundColor: theme.colors.bgElevated,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+  projectOptionsHandle: {
+    alignSelf: 'center',
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.border,
+    marginBottom: 14,
+  },
+  projectOptionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  projectOptionsIcon: {
+    width: 44,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: theme.colors.bgSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  projectOptionsTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 15,
+    color: theme.colors.textPrimary,
+  },
+  projectOptionsName: {
+    fontFamily: theme.typography.ui,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 3,
+  },
+  projectOptionsClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: theme.colors.bgSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  projectOptionAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 58,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    backgroundColor: theme.colors.bgSurface,
+  },
+  projectOptionActionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  projectOptionActionTitle: {
+    fontFamily: theme.typography.uiBold,
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+  },
+  projectOptionActionSub: {
+    fontFamily: theme.typography.ui,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -869,6 +1333,9 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+  githubProjectCard: {
+    borderColor: theme.colors.textPrimary + '22',
+  },
   projectIcon: {
     width: 48,
     height: 48,
@@ -877,6 +1344,11 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 16,
+  },
+  githubProjectIcon: {
+    backgroundColor: '#000000',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.textPrimary + '28',
   },
   projectInfo: {
     flex: 1,
@@ -892,13 +1364,57 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
   },
+  inputLabel: {
+    fontFamily: theme.typography.ui,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginBottom: 8,
+  },
+  folderPickerList: {
+    backgroundColor: theme.colors.bgSurface,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    overflow: 'hidden',
+  },
+  folderPickerOption: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+  folderPickerOptionActive: {
+    backgroundColor: theme.colors.bgElevated,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.accentBlue,
+  },
+  folderPickerOptionText: {
+    fontFamily: theme.typography.ui,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    flex: 1,
+  },
+  folderPickerOptionTextActive: {
+    color: theme.colors.textPrimary,
+    fontFamily: theme.typography.uiBold,
+  },
+  folderPickerPath: {
+    fontFamily: theme.typography.mono,
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginLeft: 4,
+  },
   searchInput: {
     fontFamily: theme.typography.ui,
-    fontSize: 15,
+    fontSize: 16,
     color: theme.colors.textPrimary,
     backgroundColor: theme.colors.bgSurface,
     paddingHorizontal: 16,
-    height: 44,
+    height: 48,
     borderRadius: 8,
   },
 });

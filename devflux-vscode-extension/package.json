@@ -1,9 +1,9 @@
 {
-  "name": "devflex-ide-sync",
-  "displayName": "DevFlex Sync IDE",
-  "description": "Live sync your VS Code workspace with DevFlex mobile IDE.",
-  "version": "1.0.6",
-  "publisher": "DevFlex",
+  "name": "devflux-mobile-sync",
+  "displayName": "DevFlux",
+  "description": "Sync your VS Code workspace with DevFlux Mobile IDE.",
+  "version": "1.0.9",
+  "publisher": "DevFlux",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -15,19 +15,19 @@
   "contributes": {
     "commands": [
       {
-        "command": "devflex-sync.startServer",
-        "title": "DevFlex: Start Live Sync Server"
+        "command": "devflux-sync.startServer",
+        "title": "DevFlux: Start Live Sync Server"
       },
       {
-        "command": "devflex-sync.stopServer",
-        "title": "DevFlex: Stop Live Sync Server"
+        "command": "devflux-sync.stopServer",
+        "title": "DevFlux: Stop Live Sync Server"
       }
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
   },
   "dependencies": {
     "ws": "^8.18.0"

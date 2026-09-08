@@ -1,0 +1,210 @@
+2026-09-03T17:35:59.162-0300 [INFO] [org.gradle.internal.nativeintegration.services.NativeServices] Initialized native services in: /home/marcos/.gradle/native
+2026-09-03T17:35:59.209-0300 [INFO] [org.gradle.internal.nativeintegration.services.NativeServices] Initialized jansi services in: /home/marcos/.gradle/native
+2026-09-03T17:35:59.224-0300 [LIFECYCLE] [org.gradle.launcher.cli.DebugLoggerWarningAction] 
+#############################################################################
+   WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+
+   Debug level logging will leak security sensitive information!
+
+   For more details, please refer to https://docs.gradle.org/8.11.1/userguide/logging.html#sec:debug_security in the Gradle documentation.
+#############################################################################
+
+2026-09-03T17:35:59.361-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClient] Executing build 16341369-76cc-46ac-9f11-cd80f23d7adc in daemon client {pid=80784}
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding IP addresses for network interface eth0
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Is this a loopback interface? false
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding remote address /fe80:0:0:0:215:5dff:fe02:4609%eth0
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding remote address /172.18.65.160
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding IP addresses for network interface lo
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Is this a loopback interface? true
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding loopback address /0:0:0:0:0:0:0:1%lo
+2026-09-03T17:35:59.363-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Ignoring remote address on loopback interface /10.255.255.254
+2026-09-03T17:35:59.364-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.InetAddresses] Adding loopback address /127.0.0.1
+2026-09-03T17:35:59.375-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire shared lock on daemon addresses registry.
+2026-09-03T17:35:59.377-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on daemon addresses registry.
+2026-09-03T17:35:59.381-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on daemon addresses registry.
+2026-09-03T17:35:59.385-0300 [INFO] [org.gradle.launcher.daemon.client.DefaultDaemonConnector] Found daemon DaemonInfo{pid=80488, address=[66608035-1b14-43a0-9b70-9a1099cc16de port:39281, addresses:[/127.0.0.1]], state=Idle, lastBusy=1788467626447, context=DefaultDaemonContext[uid=bb43cbc9-6364-4d8c-a9d7-d2e8df8b5cec,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=80488,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=384m,-XX:+HeapDumpOnOutOfMemoryError,-Xms256m,-Xmx512m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]} however its context does not match the desired criteria.
+At least one daemon option is different.
+Wanted: DaemonRequestContext{jvmCriteria=/usr/lib/jvm/java-17-openjdk-amd64 (no JDK specified, using current Java home), daemonOpts=[-XX:MaxMetaspaceSize=1024m, -Xmx4096m, -Dfile.encoding=UTF-8, -Duser.country, -Duser.language=en, -Duser.variant], applyInstrumentationAgent=true, nativeServicesMode=ENABLED, priority=NORMAL}
+Actual: DefaultDaemonContext[uid=bb43cbc9-6364-4d8c-a9d7-d2e8df8b5cec,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=80488,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=384m,-XX:+HeapDumpOnOutOfMemoryError,-Xms256m,-Xmx512m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]
+
+  Looking for a different daemon...
+2026-09-03T17:35:59.387-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.TcpOutgoingConnector] Attempting to connect to [406c81b3-df03-4699-873c-936e112547d7 port:42633, addresses:[/127.0.0.1]].
+2026-09-03T17:35:59.387-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.TcpOutgoingConnector] Trying to connect to address /127.0.0.1.
+2026-09-03T17:35:59.390-0300 [DEBUG] [org.gradle.internal.remote.internal.inet.TcpOutgoingConnector] Connected to address /127.0.0.1:42633.
+2026-09-03T17:35:59.413-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClient] Connected to daemon DaemonInfo{pid=79940, address=[406c81b3-df03-4699-873c-936e112547d7 port:42633, addresses:[/127.0.0.1]], state=Idle, lastBusy=1788467614954, context=DefaultDaemonContext[uid=d85a6afc-6d41-4ae2-88f7-97f9505b4c1c,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=79940,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=1024m,-Xmx4096m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]}. Dispatching request Build{id=16341369-76cc-46ac-9f11-cd80f23d7adc, currentDir=/home/marcos/DevFlux/android}.
+2026-09-03T17:35:59.413-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClientConnection] thread 1: dispatching class org.gradle.launcher.daemon.protocol.Build
+2026-09-03T17:35:59.431-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClient] Received result org.gradle.launcher.daemon.protocol.BuildStarted@18bc345 from daemon DaemonInfo{pid=79940, address=[406c81b3-df03-4699-873c-936e112547d7 port:42633, addresses:[/127.0.0.1]], state=Idle, lastBusy=1788467614954, context=DefaultDaemonContext[uid=d85a6afc-6d41-4ae2-88f7-97f9505b4c1c,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=79940,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=1024m,-Xmx4096m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]} (build should be starting).
+2026-09-03T17:35:59.431-0300 [INFO] [org.gradle.launcher.daemon.server.exec.LogToClient] The client will now receive all logging from the daemon (pid: 79940). The daemon log file: /home/marcos/.gradle/daemon/8.11.1/daemon-79940.out.log
+2026-09-03T17:35:59.432-0300 [INFO] [org.gradle.launcher.daemon.server.exec.LogAndCheckHealth] Starting 7th build in daemon [uptime: 5 mins 54.983 secs, performance: 99%, GC rate: 0.00/s, heap usage: 0% of 4 GiB, non-heap usage: 4% of 1 GiB]
+2026-09-03T17:35:59.433-0300 [DEBUG] [org.gradle.launcher.daemon.server.exec.ExecuteBuild] The daemon has started executing the build.
+2026-09-03T17:35:59.433-0300 [DEBUG] [org.gradle.launcher.daemon.server.exec.ExecuteBuild] Executing build with daemon context: DefaultDaemonContext[uid=d85a6afc-6d41-4ae2-88f7-97f9505b4c1c,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=79940,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=1024m,-Xmx4096m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]
+2026-09-03T17:35:59.448-0300 [INFO] [org.gradle.internal.work.DefaultWorkerLeaseService] Using 1 worker leases.
+2026-09-03T17:35:59.448-0300 [DEBUG] [org.gradle.internal.resources.AbstractTrackedResourceLock] Daemon worker Thread 3: acquired lock on worker lease
+2026-09-03T17:35:59.448-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Run build' started
+2026-09-03T17:35:59.461-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for fileHashes, path /home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes/fileHashes.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@73fc08c7
+2026-09-03T17:35:59.461-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for file hash cache (/home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes)
+2026-09-03T17:35:59.462-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on file hash cache (/home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes).
+2026-09-03T17:35:59.462-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on file hash cache (/home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes).
+2026-09-03T17:35:59.463-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for outputFiles, path /home/marcos/DevFlux/android/.gradle/buildOutputCleanup/outputFiles.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@1871a663
+2026-09-03T17:35:59.463-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for Build Output Cleanup Cache (/home/marcos/DevFlux/android/.gradle/buildOutputCleanup)
+2026-09-03T17:35:59.463-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on Build Output Cleanup Cache (/home/marcos/DevFlux/android/.gradle/buildOutputCleanup).
+2026-09-03T17:35:59.464-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on Build Output Cleanup Cache (/home/marcos/DevFlux/android/.gradle/buildOutputCleanup).
+2026-09-03T17:35:59.464-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for resourceHashesCache, path /home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes/resourceHashesCache.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@73fc08c7
+2026-09-03T17:35:59.467-0300 [INFO] [org.gradle.internal.watch.registry.impl.WatchableHierarchies] Now considering [/home/marcos/DevFlux/android] as hierarchies to watch
+2026-09-03T17:35:59.468-0300 [INFO] [org.gradle.tooling.internal.provider.FileSystemWatchingBuildActionRunner] Watching the file system is configured to be enabled if available
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.tooling.internal.provider.FileSystemWatchingBuildActionRunner] Watching the file system computed to be enabled if available
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Build started for file system watching' started
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected overlay: /usr/lib/modules/6.18.33.2-microsoft-standard-WSL2 from none (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /mnt/wsl from none (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected 9p: /usr/lib/wsl/drivers from drivers (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected ext4: / from /dev/sdd (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /mnt/wslg from none (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected ext4: /mnt/wslg/distro from /dev/sdd (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected overlay: /usr/lib/wsl/lib from none (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected rootfs: /init from rootfs (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected devtmpfs: /dev from none (remote: false)
+2026-09-03T17:35:59.469-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected sysfs: /sys from sysfs (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected proc: /proc from proc (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected devpts: /dev/pts from devpts (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/lock from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/shm from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /dev/shm from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/user from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected binfmt_misc: /proc/sys/fs/binfmt_misc from binfmt_misc (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected cgroup2: /sys/fs/cgroup from cgroup2 (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected overlay: /mnt/wslg/versions.txt from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected overlay: /mnt/wslg/doc from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /tmp/.X11-unix from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected 9p: /mnt/c from C:\ (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/user from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/credentials/systemd-journald.service from none (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected debugfs: /sys/kernel/debug from debugfs (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected mqueue: /dev/mqueue from mqueue (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /tmp from tmpfs (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected fusectl: /sys/fs/fuse/connections from fusectl (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected hugetlbfs: /dev/hugepages from hugetlbfs (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected configfs: /sys/kernel/config from configfs (remote: false)
+2026-09-03T17:35:59.470-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tracefs: /sys/kernel/tracing from tracefs (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/credentials/systemd-resolved.service from none (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /tmp/.X11-unix from none (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/credentials/getty@tty1.service from none (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/user/1000 from tmpfs (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /mnt/wslg/run/user/1000 from tmpfs (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /run/user/0 from tmpfs (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector] Detected tmpfs: /mnt/wslg/run/user/0 from tmpfs (remote: false)
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Build started for file system watching'
+2026-09-03T17:35:59.471-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Build started for file system watching' completed
+2026-09-03T17:35:59.472-0300 [INFO] [org.gradle.tooling.internal.provider.FileSystemWatchingBuildActionRunner] File system watching is active
+2026-09-03T17:35:59.472-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Load build' started
+2026-09-03T17:35:59.472-0300 [DEBUG] [org.gradle.initialization.properties.DefaultProjectPropertiesLoader] Found env project properties: []
+2026-09-03T17:35:59.473-0300 [DEBUG] [org.gradle.initialization.properties.DefaultProjectPropertiesLoader] Found system project properties: []
+2026-09-03T17:35:59.473-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Evaluate settings' started
+2026-09-03T17:35:59.474-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for workingDirs, path /home/marcos/DevFlux/android/.gradle/8.11.1/vcsMetadata/workingDirs.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@7a6837df
+2026-09-03T17:35:59.477-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for md5-checksums, path /home/marcos/DevFlux/android/.gradle/8.11.1/checksums/md5-checksums.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@2014efe7
+2026-09-03T17:35:59.478-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for checksums cache (/home/marcos/DevFlux/android/.gradle/8.11.1/checksums)
+2026-09-03T17:35:59.478-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on checksums cache (/home/marcos/DevFlux/android/.gradle/8.11.1/checksums).
+2026-09-03T17:35:59.478-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on checksums cache (/home/marcos/DevFlux/android/.gradle/8.11.1/checksums).
+2026-09-03T17:35:59.478-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for sha1-checksums, path /home/marcos/DevFlux/android/.gradle/8.11.1/checksums/sha1-checksums.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@2014efe7
+2026-09-03T17:35:59.479-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for sha256-checksums, path /home/marcos/DevFlux/android/.gradle/8.11.1/checksums/sha256-checksums.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@2014efe7
+2026-09-03T17:35:59.479-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for sha512-checksums, path /home/marcos/DevFlux/android/.gradle/8.11.1/checksums/sha512-checksums.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@2014efe7
+2026-09-03T17:35:59.480-0300 [DEBUG] [org.gradle.api.internal.artifacts.mvnsettings.DefaultLocalMavenRepositoryLocator] No local repository in Settings file defined. Using default path: /home/marcos/.m2/repository
+2026-09-03T17:35:59.481-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for md-rule, path /home/marcos/.gradle/caches/8.11.1/md-rule/md-rule.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@1fdc1f0f
+2026-09-03T17:35:59.482-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for cache directory md-rule (/home/marcos/.gradle/caches/8.11.1/md-rule)
+2026-09-03T17:35:59.482-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on cache directory md-rule (/home/marcos/.gradle/caches/8.11.1/md-rule).
+2026-09-03T17:35:59.483-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on cache directory md-rule (/home/marcos/.gradle/caches/8.11.1/md-rule).
+2026-09-03T17:35:59.484-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Creating new cache for md-supplier, path /home/marcos/.gradle/caches/8.11.1/md-supplier/md-supplier.bin, access org.gradle.cache.internal.DefaultCacheCoordinator@7f82505c
+2026-09-03T17:35:59.485-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for cache directory md-supplier (/home/marcos/.gradle/caches/8.11.1/md-supplier)
+2026-09-03T17:35:59.485-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on cache directory md-supplier (/home/marcos/.gradle/caches/8.11.1/md-supplier).
+2026-09-03T17:35:59.486-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on cache directory md-supplier (/home/marcos/.gradle/caches/8.11.1/md-supplier).
+2026-09-03T17:35:59.486-0300 [DEBUG] [org.gradle.internal.locking.LockFileReaderWriter] Lockfiles root: /home/marcos/DevFlux/android/gradle/dependency-locks
+2026-09-03T17:35:59.488-0300 [INFO] [org.gradle.internal.buildevents.BuildLogger] Starting Build
+2026-09-03T17:35:59.488-0300 [DEBUG] [org.gradle.internal.buildevents.BuildLogger] Gradle user home: /home/marcos/.gradle
+2026-09-03T17:35:59.488-0300 [DEBUG] [org.gradle.internal.buildevents.BuildLogger] Current dir: /home/marcos/DevFlux/android
+2026-09-03T17:35:59.489-0300 [DEBUG] [org.gradle.internal.buildevents.BuildLogger] Settings file: null
+2026-09-03T17:35:59.490-0300 [DEBUG] [org.gradle.internal.buildevents.BuildLogger] Build file: null
+2026-09-03T17:35:59.491-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Apply settings file 'settings.gradle' to settings 'android'' started
+2026-09-03T17:35:59.492-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Identifying work' started
+2026-09-03T17:35:59.492-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Identifying work'
+2026-09-03T17:35:59.492-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Identifying work' completed
+2026-09-03T17:35:59.492-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for journal cache (/home/marcos/.gradle/caches/journal-1)
+2026-09-03T17:35:59.492-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on journal cache (/home/marcos/.gradle/caches/journal-1).
+2026-09-03T17:35:59.493-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on journal cache (/home/marcos/.gradle/caches/journal-1).
+2026-09-03T17:35:59.493-0300 [INFO] [org.gradle.cache.internal.InMemoryDecoratedCache] Invalidating in-memory cache of /home/marcos/.gradle/caches/journal-1/file-access.bin
+2026-09-03T17:35:59.493-0300 [DEBUG] [org.gradle.cache.internal.btree.BTreePersistentIndexedCache] Opening cache file-access.bin (/home/marcos/.gradle/caches/journal-1/file-access.bin)
+2026-09-03T17:35:59.494-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for file hash cache (/home/marcos/.gradle/caches/8.11.1/fileHashes)
+2026-09-03T17:35:59.494-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on file hash cache (/home/marcos/.gradle/caches/8.11.1/fileHashes).
+2026-09-03T17:35:59.494-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on file hash cache (/home/marcos/.gradle/caches/8.11.1/fileHashes).
+2026-09-03T17:35:59.495-0300 [INFO] [org.gradle.cache.internal.InMemoryDecoratedCache] Invalidating in-memory cache of /home/marcos/.gradle/caches/8.11.1/fileHashes/fileHashes.bin
+2026-09-03T17:35:59.495-0300 [INFO] [org.gradle.cache.internal.InMemoryDecoratedCache] Invalidating in-memory cache of /home/marcos/.gradle/caches/8.11.1/fileHashes/resourceHashesCache.bin
+2026-09-03T17:35:59.495-0300 [DEBUG] [org.gradle.cache.internal.btree.BTreePersistentIndexedCache] Opening cache fileHashes.bin (/home/marcos/.gradle/caches/8.11.1/fileHashes/fileHashes.bin)
+2026-09-03T17:35:59.503-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Acquiring file lock for jars (/home/marcos/.gradle/caches/jars-9)
+2026-09-03T17:35:59.503-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Waiting to acquire exclusive lock on jars (/home/marcos/.gradle/caches/jars-9).
+2026-09-03T17:35:59.504-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Lock acquired on jars (/home/marcos/.gradle/caches/jars-9).
+2026-09-03T17:35:59.516-0300 [INFO] [org.gradle.process.internal.DefaultExecHandle] Starting process 'command '/usr/bin/node''. Working directory: /home/marcos/DevFlux/android Command: /usr/bin/node -e console.log(require('react-native/package.json').version);
+2026-09-03T17:35:59.516-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: STARTING
+2026-09-03T17:35:59.517-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Waiting until process started: command '/usr/bin/node'.
+2026-09-03T17:35:59.519-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: STARTED
+2026-09-03T17:35:59.519-0300 [DEBUG] [org.gradle.process.internal.ExecHandleRunner] waiting until streams are handled...
+2026-09-03T17:35:59.519-0300 [INFO] [org.gradle.process.internal.DefaultExecHandle] Successfully started process 'command '/usr/bin/node''
+2026-09-03T17:35:59.662-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: SUCCEEDED
+2026-09-03T17:35:59.662-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Process 'command '/usr/bin/node'' finished with exit value 0 (state: SUCCEEDED)
+2026-09-03T17:35:59.859-0300 [INFO] [org.gradle.process.internal.DefaultExecHandle] Starting process 'command '/usr/bin/node''. Working directory: /home/marcos/DevFlux/android Command: /usr/bin/node --print require.resolve('expo-modules-autolinking/package.json', { paths: [require.resolve('expo/package.json')] })
+2026-09-03T17:35:59.860-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: STARTING
+2026-09-03T17:35:59.860-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Waiting until process started: command '/usr/bin/node'.
+2026-09-03T17:35:59.862-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: STARTED
+2026-09-03T17:35:59.862-0300 [DEBUG] [org.gradle.process.internal.ExecHandleRunner] waiting until streams are handled...
+2026-09-03T17:35:59.862-0300 [INFO] [org.gradle.process.internal.DefaultExecHandle] Successfully started process 'command '/usr/bin/node''
+2026-09-03T17:35:59.991-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Changing state to: SUCCEEDED
+2026-09-03T17:35:59.992-0300 [DEBUG] [org.gradle.process.internal.DefaultExecHandle] Process 'command '/usr/bin/node'' finished with exit value 0 (state: SUCCEEDED)
+2026-09-03T17:35:59.996-0300 [INFO] [org.gradle.internal.watch.registry.impl.WatchableHierarchies] Now considering [/home/marcos/DevFlux/node_modules/@react-native/gradle-plugin, /home/marcos/DevFlux/android] as hierarchies to watch
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Apply settings file 'settings.gradle' to settings 'android''
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Apply settings file 'settings.gradle' to settings 'android'' completed
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Evaluate settings'
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Evaluate settings' completed
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Load build'
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Load build' completed
+2026-09-03T17:35:59.997-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Finish root build tree' started
+2026-09-03T17:35:59.998-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Finish root build tree'
+2026-09-03T17:35:59.998-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Finish root build tree' completed
+2026-09-03T17:35:59.998-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Build finished for file system watching' started
+2026-09-03T17:35:59.998-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Build finished for file system watching'
+2026-09-03T17:35:59.998-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Build finished for file system watching' completed
+2026-09-03T17:36:00.000-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Releasing file lock for cache directory md-supplier (/home/marcos/.gradle/caches/8.11.1/md-supplier)
+2026-09-03T17:36:00.000-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on cache directory md-supplier (/home/marcos/.gradle/caches/8.11.1/md-supplier).
+2026-09-03T17:36:00.001-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Releasing file lock for Build Output Cleanup Cache (/home/marcos/DevFlux/android/.gradle/buildOutputCleanup)
+2026-09-03T17:36:00.001-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on Build Output Cleanup Cache (/home/marcos/DevFlux/android/.gradle/buildOutputCleanup).
+2026-09-03T17:36:00.001-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Releasing file lock for cache directory md-rule (/home/marcos/.gradle/caches/8.11.1/md-rule)
+2026-09-03T17:36:00.001-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on cache directory md-rule (/home/marcos/.gradle/caches/8.11.1/md-rule).
+2026-09-03T17:36:00.002-0300 [DEBUG] [org.gradle.api.internal.artifacts.ivyservice.resolveengine.store.ResolutionResultsStoreFactory] Deleted 0 resolution results binary files in 0.0 secs
+2026-09-03T17:36:00.002-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Run build'
+2026-09-03T17:36:00.002-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Run build' completed
+2026-09-03T17:36:00.002-0300 [DEBUG] [org.gradle.internal.resources.AbstractTrackedResourceLock] Daemon worker Thread 3: released lock on worker lease
+2026-09-03T17:36:00.006-0300 [DEBUG] [org.gradle.deployment.internal.DefaultDeploymentRegistry] Stopping 0 deployment handles
+2026-09-03T17:36:00.006-0300 [DEBUG] [org.gradle.deployment.internal.DefaultDeploymentRegistry] Stopped deployment handles
+2026-09-03T17:36:00.006-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Releasing file lock for file hash cache (/home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes)
+2026-09-03T17:36:00.006-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on file hash cache (/home/marcos/DevFlux/android/.gradle/8.11.1/fileHashes).
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.LockOnDemandCrossProcessCacheAccess] Releasing file lock for checksums cache (/home/marcos/DevFlux/android/.gradle/8.11.1/checksums)
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultFileLockManager] Releasing lock on checksums cache (/home/marcos/DevFlux/android/.gradle/8.11.1/checksums).
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCleanupExecutor] VCS Checkout Cache (/home/marcos/DevFlux/android/.gradle/vcs-1) has last been fully cleaned up 2 hours ago
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCleanupExecutor] Skipping cleanup for VCS Checkout Cache (/home/marcos/DevFlux/android/.gradle/vcs-1) as it is not yet due
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Cache VCS Checkout Cache (/home/marcos/DevFlux/android/.gradle/vcs-1) was closed 0 times.
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Cache VCS metadata (/home/marcos/DevFlux/android/.gradle/8.11.1/vcsMetadata) was closed 0 times.
+2026-09-03T17:36:00.007-0300 [DEBUG] [org.gradle.cache.internal.DefaultCacheCoordinator] Cache Compressed Files Expansion Cache (/home/marcos/DevFlux/android/.gradle/8.11.1/expanded) was closed 0 times.
+2026-09-03T17:36:00.008-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Deleting unused version-specific caches in /home/marcos/DevFlux/android/.gradle' started
+2026-09-03T17:36:00.008-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Completing Build operation 'Deleting unused version-specific caches in /home/marcos/DevFlux/android/.gradle'
+2026-09-03T17:36:00.008-0300 [DEBUG] [org.gradle.internal.operations.DefaultBuildOperationRunner] Build operation 'Deleting unused version-specific caches in /home/marcos/DevFlux/android/.gradle' completed
+2026-09-03T17:36:00.016-0300 [DEBUG] [org.gradle.launcher.daemon.server.exec.ExecuteBuild] The daemon has finished executing the build.
+2026-09-03T17:36:00.051-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClientConnection] thread 1: dispatching class org.gradle.launcher.daemon.protocol.CloseInput
+2026-09-03T17:36:00.051-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClient] Received result Success[value=org.gradle.launcher.exec.BuildActionResult@68ad99fe] from daemon DaemonInfo{pid=79940, address=[406c81b3-df03-4699-873c-936e112547d7 port:42633, addresses:[/127.0.0.1]], state=Idle, lastBusy=1788467614954, context=DefaultDaemonContext[uid=d85a6afc-6d41-4ae2-88f7-97f9505b4c1c,javaHome=/usr/lib/jvm/java-17-openjdk-amd64,javaVersion=17,javaVendor=Ubuntu,daemonRegistryDir=/home/marcos/.gradle/daemon,pid=79940,idleTimeout=10800000,priority=NORMAL,applyInstrumentationAgent=true,nativeServicesMode=ENABLED,daemonOpts=-XX:MaxMetaspaceSize=1024m,-Xmx4096m,-Dfile.encoding=UTF-8,-Duser.country,-Duser.language=en,-Duser.variant]} (build should be done).
+2026-09-03T17:36:00.051-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClientConnection] thread 1: dispatching class org.gradle.launcher.daemon.protocol.Finished
+2026-09-03T17:36:00.051-0300 [DEBUG] [org.gradle.launcher.daemon.client.DaemonClientConnection] thread 1: connection stop
+2026-09-03T17:36:00.053-0300 [LIFECYCLE] [org.gradle.launcher.cli.DebugLoggerWarningAction] 
+#############################################################################
+   WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
+
+   Debug level logging will leak security sensitive information!
+
+   For more details, please refer to https://docs.gradle.org/8.11.1/userguide/logging.html#sec:debug_security in the Gradle documentation.
+#############################################################################
+

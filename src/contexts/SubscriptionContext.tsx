@@ -1,49 +1,24 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useContext } from 'react';
 
 interface SubscriptionContextType {
   isPro: boolean;
   unlockPro: () => Promise<void>;
   resetPro: () => Promise<void>;
+  customerInfo: any | null;
 }
 
 const SubscriptionContext = createContext<SubscriptionContextType>({
-  isPro: false,
+  isPro: true,
   unlockPro: async () => {},
   resetPro: async () => {},
+  customerInfo: null,
 });
 
 export const useSubscription = () => useContext(SubscriptionContext);
 
 export const SubscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isPro, setIsPro] = useState(false);
-
-  useEffect(() => {
-    const loadStatus = async () => {
-      try {
-        const val = await AsyncStorage.getItem('@codeflex_pro');
-        if (val === 'true') {
-          setIsPro(true);
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    loadStatus();
-  }, []);
-
-  const unlockPro = async () => {
-    setIsPro(true);
-    await AsyncStorage.setItem('@codeflex_pro', 'true');
-  };
-
-  const resetPro = async () => {
-    setIsPro(false);
-    await AsyncStorage.removeItem('@codeflex_pro');
-  };
-
   return (
-    <SubscriptionContext.Provider value={{ isPro, unlockPro, resetPro }}>
+    <SubscriptionContext.Provider value={{ isPro: true, unlockPro: async () => {}, resetPro: async () => {}, customerInfo: null }}>
       {children}
     </SubscriptionContext.Provider>
   );

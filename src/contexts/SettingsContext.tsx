@@ -2,12 +2,16 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface EditorSettings {
+  editorEngine?: 'monaco' | 'lightweight';
   fontSize: number;
+  fontFamily?: string;
   wordWrap: 'on' | 'off';
   minimap: boolean;
   autoSave: boolean;
   formatOnSave: boolean;
   lineNumbers: 'on' | 'off';
+  githubToken?: string;
+  relayUrl?: string;
 }
 
 interface SettingsContextType {
@@ -16,12 +20,14 @@ interface SettingsContextType {
 }
 
 const defaultSettings: EditorSettings = {
+  editorEngine: 'monaco',
   fontSize: 14,
   wordWrap: 'on',
   minimap: false,
   autoSave: false,
   formatOnSave: false,
   lineNumbers: 'on',
+  relayUrl: 'http://localhost:8080',
 };
 
 const SettingsContext = createContext<SettingsContextType>({

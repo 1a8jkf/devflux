@@ -4,12 +4,13 @@ import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
 import { useRouter } from 'expo-router';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const FAQ_ITEMS = [
   { q: 'O que é o DevFlux?', a: 'O DevFlux é uma IDE completa para celular focada em desenvolvimento Web, Node e React, trazendo o poder do VS Code (Monaco Editor) e ferramentas como Git e Terminal para a palma da sua mão.' },
   { q: 'Como sincronizo com o PC?', a: 'Use a aba "Live Coding / Sync PC" na tela inicial, escaneie o QR Code com a nossa extensão do VS Code e comece a programar no PC enquanto vê as atualizações instantaneamente no celular.' },
   { q: 'Quais linguagens e frameworks são suportados?', a: 'Suportamos HTML, CSS, JavaScript, TypeScript, React, React Native (via Expo Web), Vue, Node.js e muito mais, contando com realce de sintaxe e autocompletar avançado.' },
-  { q: 'Como usar a IA embutida?', a: 'Toque no ícone de IA (Sparkles) no menu inferior ou lateral. A inteligência artificial (CodeFlex AI) lerá o contexto do seu projeto e poderá gerar códigos, corrigir bugs e explicar funções.' },
+  { q: 'Como usar a IA embutida?', a: 'Toque no ícone de IA (Sparkles) no menu inferior ou lateral. A inteligência artificial (DevFlux AI) lerá o contexto do seu projeto e poderá gerar códigos, corrigir bugs e explicar funções.' },
   { q: 'Onde meus arquivos são salvos?', a: 'Eles ficam salvos localmente na sandbox do aplicativo. Você também pode importar projetos de pastas externas usando a Storage Access Framework no Android, ou vincular repositórios do GitHub.' },
   { q: 'O Terminal executa comandos reais?', a: 'Sim! Em projetos baseados em WebContainers (Node), o terminal executa um ambiente bash em webassembly. Em projetos normais, ele interage com as APIs de ferramentas embutidas como o isomorphic-git.' }
 ];
@@ -17,33 +18,31 @@ const FAQ_ITEMS = [
 export default function AjudaScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
 
   const router = useRouter();
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Central de Ajuda</Text>
-        <Text style={styles.subtitle}>Como podemos ajudar você hoje?</Text>
-      </View>
+
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Perguntas Frequentes (FAQ)</Text>
+        <Text style={styles.sectionTitle}>{t('Perguntas Frequentes (FAQ)')}</Text>
         {FAQ_ITEMS.map((item, idx) => (
           <View key={idx} style={styles.faqCard}>
-            <Text style={styles.faqQ}>{item.q}</Text>
-            <Text style={styles.faqA}>{item.a}</Text>
+            <Text style={styles.faqQ}>{t(item.q)}</Text>
+            <Text style={styles.faqA}>{t(item.a)}</Text>
           </View>
         ))}
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Suporte</Text>
+        <Text style={styles.sectionTitle}>{t('Suporte')}</Text>
         <TouchableOpacity style={styles.supportCard} onPress={() => router.push('/suporte')}>
           <Icon name="MessageSquare" size={24} color={theme.colors.accentBlue} />
           <View style={styles.supportInfo}>
-            <Text style={styles.supportTitle}>Falar com Suporte</Text>
-            <Text style={styles.supportDesc}>Tempo médio de resposta: 2h</Text>
+            <Text style={styles.supportTitle}>{t('Falar com Suporte')}</Text>
+            <Text style={styles.supportDesc}>{t('Tempo médio de resposta: 2h')}</Text>
           </View>
           <Icon name="ChevronRight" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
@@ -51,8 +50,8 @@ export default function AjudaScreen() {
         <TouchableOpacity style={styles.supportCard} onPress={() => router.push('/documentacao')}>
           <Icon name="BookOpen" size={24} color={theme.colors.accentAmber} />
           <View style={styles.supportInfo}>
-            <Text style={styles.supportTitle}>Documentação Oficial</Text>
-            <Text style={styles.supportDesc}>Guias detalhados e API</Text>
+            <Text style={styles.supportTitle}>{t('Documentação Oficial')}</Text>
+            <Text style={styles.supportDesc}>{t('Guias detalhados e API')}</Text>
           </View>
           <Icon name="ChevronRight" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>

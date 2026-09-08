@@ -4,10 +4,12 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { GithubService } from '../../services/GithubService';
 import { Icon } from '../../components/Icon';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function PRsScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   
   const [prs, setPrs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +55,7 @@ export default function PRsScreen() {
             <Text style={[styles.cardDate, {marginLeft: 4}]}>{item.comments}</Text>
           </View>
           <Text style={styles.cardDate}>
-            Atualizado em {new Date(item.updated_at).toLocaleDateString()}
+            {t('Atualizado em')} {new Date(item.updated_at).toLocaleDateString()}
           </Text>
         </View>
       </TouchableOpacity>
@@ -69,7 +71,7 @@ export default function PRsScreen() {
       ) : prs.length === 0 ? (
         <View style={styles.center}>
           <Icon name="GitPullRequest" size={48} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Nenhum Pull Request aberto.</Text>
+          <Text style={styles.emptyText}>{t('Nenhum Pull Request aberto.')}</Text>
         </View>
       ) : (
         <FlatList

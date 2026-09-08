@@ -23,7 +23,13 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const { theme } = useAppTheme();
 
-  const LucideIcon = (LucideIcons as any)[name] as React.FC<any>;
+  const requestedName = String(name || '');
+  const fallbackIcons: Record<string, string> = {
+    GitHub: 'Github',
+    Github: 'GitBranch',
+    TerminalSquare: 'SquareTerminal',
+  };
+  const LucideIcon = ((LucideIcons as any)[requestedName] || (LucideIcons as any)[fallbackIcons[requestedName]]) as React.FC<any>;
 
   if (!LucideIcon) {
     return null; // or a fallback icon

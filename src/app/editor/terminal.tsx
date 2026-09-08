@@ -6,10 +6,12 @@ import { AppTheme } from '../../theme';
 import { TerminalView } from '../../components/TerminalView';
 import { Icon } from '../../components/Icon';
 import { NodeRunner } from '../../utils/nodeRunner';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function TerminalScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   const params = useLocalSearchParams();
   const projectId = params.projectId as string;
 
@@ -22,7 +24,7 @@ export default function TerminalScreen() {
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Icon name="Terminal" size={18} color={theme.colors.accentBlue} />
-          <Text style={styles.title}>Terminal do Projeto</Text>
+          <Text style={styles.title}>{t('Terminal do Projeto')}</Text>
         </View>
         <Text style={{ fontFamily: theme.typography.mono, fontSize: 12, color: theme.colors.textSecondary }}>
           /projects/{projectId || 'workspace'}

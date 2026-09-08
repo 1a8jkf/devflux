@@ -5,11 +5,13 @@ import { AppTheme } from '../../theme';
 import { GithubService, GithubRepo } from '../../services/GithubService';
 import { FileSystemService } from '../../services/FileSystemService';
 import { Icon } from '../../components/Icon';
+import { useLanguage } from '../../contexts/LanguageContext';
 import { useRouter } from 'expo-router';
 
 export default function ReposScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   const router = useRouter();
   
   const [repos, setRepos] = useState<GithubRepo[]>([]);
@@ -38,7 +40,7 @@ export default function ReposScreen() {
       await FileSystemService.downloadGitRepo(repo.html_url);
       router.replace('/projetos');
     } catch (e: any) {
-      alert(e.message || 'Erro ao baixar o repositório');
+      alert(e.message || t('Erro ao baixar o repositório'));
     } finally {
       setDownloadingId(null);
     }
@@ -51,7 +53,7 @@ export default function ReposScreen() {
       <TouchableOpacity 
         style={styles.card}
         onPress={() => {
-          if (!isDownloading) alert(`Abrir ${item.name}`);
+          if (!isDownloading) alert(`${t('Abrir')} ${item.name}`);
         }}
       >
       <View style={styles.cardHeader}>
@@ -64,7 +66,7 @@ export default function ReposScreen() {
       )}
       <View style={styles.cardFooter}>
         <Text style={styles.cardDate}>
-          Atualizado em {new Date(item.updated_at).toLocaleDateString()}
+          {t('Atualizado em')} {new Date(item.updated_at).toLocaleDateString()}
         </Text>
         <TouchableOpacity 
           style={{flexDirection: 'row', alignItems: 'center'}} 
@@ -74,12 +76,12 @@ export default function ReposScreen() {
           {isDownloading ? (
             <>
               <ActivityIndicator size="small" color={theme.colors.accentBlue} style={{ marginRight: 4 }} />
-              <Text style={{color: theme.colors.textSecondary, fontSize: 12, marginLeft: 4, fontFamily: theme.typography.uiBold}}>Baixando...</Text>
+              <Text style={{color: theme.colors.textSecondary, fontSize: 12, marginLeft: 4, fontFamily: theme.typography.uiBold}}>{t('Baixando...')}</Text>
             </>
           ) : (
             <>
               <Icon name="DownloadCloud" size={16} color={theme.colors.accentBlue} />
-              <Text style={{color: theme.colors.accentBlue, fontSize: 12, marginLeft: 4, fontFamily: theme.typography.uiBold}}>Baixar</Text>
+              <Text style={{color: theme.colors.accentBlue, fontSize: 12, marginLeft: 4, fontFamily: theme.typography.uiBold}}>{t('Baixar')}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -97,7 +99,7 @@ export default function ReposScreen() {
       ) : repos.length === 0 ? (
         <View style={styles.center}>
           <Icon name="Inbox" size={48} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Nenhum repositório encontrado.</Text>
+          <Text style={styles.emptyText}>{t('Nenhum repositório encontrado.')}</Text>
         </View>
       ) : (
         <FlatList

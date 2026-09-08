@@ -12,21 +12,17 @@ nvm install 20
 nvm use 20
 
 # Garantir npm install
-n# Bundling Alpine Rootfs offline
+# Bundling Alpine Rootfs offline
 if [ ! -f nodejs-assets/nodejs-project/ubuntu.bin ]; then
     curl -L -o nodejs-assets/nodejs-project/ubuntu.bin https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.2-aarch64.tar.gz
 fi
-npm install
-n# Bundling Alpine Rootfs offline
-if [ ! -f nodejs-assets/nodejs-project/ubuntu.bin ]; then
-    curl -L -o nodejs-assets/nodejs-project/ubuntu.bin https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.2-aarch64.tar.gz
-fi
+npm install --force
 
 # Build do Android
 export ANDROID_HOME=/home/marcos/Android/Sdk
 
 # Expo prebuild
-# npx expo prebuild -p android --clean
+npx expo prebuild -p android --clean
 
 
 # Forçar legacy packaging para que o Android extraia as bibliotecas nativas para a pasta lib/
@@ -63,11 +59,12 @@ fi
 
 # === EPIC 3: FOREGROUND SERVICE INJECTION ===
 # Copy native modules
-cp /home/marcos/DevFlux/native-src/*.kt android/app/src/main/java/com/marcos_app0001/DevFlux/
+mkdir -p android/app/src/main/java/com/marcos/devflux
+cp /home/marcos/DevFlux/native-src/*.kt android/app/src/main/java/com/marcos/devflux/
 
 # Register Package in MainApplication.kt
-if ! grep -q "DevFluxPackage()" android/app/src/main/java/com/marcos_app0001/DevFlux/MainApplication.kt; then
-    sed -i 's/\/\/ add(MyReactNativePackage())/add(DevFluxPackage())/' android/app/src/main/java/com/marcos_app0001/DevFlux/MainApplication.kt
+if ! grep -q "DevFluxPackage()" android/app/src/main/java/com/marcos/devflux/MainApplication.kt; then
+    sed -i 's/\/\/ add(MyReactNativePackage())/add(DevFluxPackage())/' android/app/src/main/java/com/marcos/devflux/MainApplication.kt
 fi
 
 # Inject Permissions in AndroidManifest.xml
@@ -83,7 +80,8 @@ fi
 # Compilar o APK Release
 cd android
 chmod +x gradlew
-./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease
+./gradlew clean --no-daemon --max-workers=1
+./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease --no-daemon --max-workers=1
 
 # Copy to Windows Desktop
 cp app/build/outputs/apk/release/app-release.apk /mnt/c/Users/user01/Desktop/DevFlux-Release.apk

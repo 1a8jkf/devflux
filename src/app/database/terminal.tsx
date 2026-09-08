@@ -6,6 +6,7 @@ import { AppTheme } from '../../theme';
 import { Icon } from '../../components/Icon';
 import { DatabaseService } from '../../services/DatabaseService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 interface QueryResult {
   columns: string[];
@@ -30,6 +31,7 @@ export default function SQLTerminalScreen() {
   
   const connectionId = params.connectionId as string;
   const connectionName = (params.connectionName as string) || 'Database';
+  const { t } = useLanguage();
 
   const [config, setConfig] = useState<any>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -120,11 +122,11 @@ export default function SQLTerminalScreen() {
     const targetTabId = activeTab.id;
     const targetQuery = activeTab.query;
     if (!config) {
-      updateTabById(targetTabId, { errorMsg: 'Configuração de conexão não encontrada.' });
+      updateTabById(targetTabId, { errorMsg: t('Configuração de conexão não encontrada.') });
       return;
     }
     if (!targetQuery.trim()) {
-      updateTabById(targetTabId, { errorMsg: 'Digite uma query SQL para executar.' });
+      updateTabById(targetTabId, { errorMsg: t('Digite uma query SQL para executar.') });
       return;
     }
     setIsRunning(true);
@@ -151,7 +153,7 @@ export default function SQLTerminalScreen() {
       });
     } catch (err: any) {
       updateTabById(targetTabId, {
-        errorMsg: err?.message || 'Erro desconhecido ao executar query.',
+        errorMsg: err?.message || t('Erro desconhecido ao executar query.'),
         result: null,
         isRunning: false,
       });
@@ -172,12 +174,12 @@ export default function SQLTerminalScreen() {
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Terminal SQL</Text>
+          <Text style={styles.title}>{t('Terminal SQL')}</Text>
           <Text style={styles.subtitle}>{connectionName}</Text>
         </View>
-        <TouchableOpacity style={styles.runBtn} onPress={handleRunQuery} disabled={activeTab.isRunning || isRunning}>
-          {activeTab.isRunning || isRunning ? <ActivityIndicator size="small" color="#FFF" /> : <Icon name="Play" size={16} color="#FFF" style={{ marginRight: 6 }} />}
-          {!(activeTab.isRunning || isRunning) && <Text style={styles.runBtnText}>Executar</Text>}
+        <TouchableOpacity style={[styles.runBtn, { minWidth: 100 }]} onPress={handleRunQuery} disabled={activeTab.isRunning || isRunning}>
+          {activeTab.isRunning || isRunning ? <ActivityIndicator size="small" color="#FFF" style={{ marginRight: 6 }} /> : <Icon name="Play" size={16} color="#FFF" style={{ marginRight: 6 }} />}
+          <Text style={styles.runBtnText}>{t('Executar')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -237,9 +239,9 @@ export default function SQLTerminalScreen() {
       <View style={styles.resultsContainer}>
         <View style={styles.resultsHeader}>
           <Icon name="Table" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
-          <Text style={styles.resultsTitle}>Resultados</Text>
+          <Text style={styles.resultsTitle}>{t('Resultados')}</Text>
           {activeTab.result && (
-            <Text style={styles.rowCount}>{activeTab.result.rowCount ?? activeTab.result.rows.length} linhas</Text>
+            <Text style={styles.rowCount}>{activeTab.result.rowCount ?? activeTab.result.rows.length} {t('linhas')}</Text>
           )}
         </View>
         
@@ -276,7 +278,7 @@ export default function SQLTerminalScreen() {
         ) : (
           <View style={styles.emptyResults}>
             <Icon name="TerminalSquare" size={32} color={theme.colors.border} />
-            <Text style={styles.emptyResultsText}>Execute uma query SQL para ver os resultados.</Text>
+            <Text style={styles.emptyResultsText}>{t('Execute uma query SQL para ver os resultados.')}</Text>
           </View>
         )}
       </View>

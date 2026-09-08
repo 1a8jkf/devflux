@@ -1,238 +1,249 @@
-import git from 'isomorphic-git';
-import http from 'isomorphic-git/http/web';
-import { ExpoFSAdapter } from './ExpoFSAdapter';
-import { GithubService } from './GithubService';
+import { NodeRunner } from '../utils/nodeRunner';
+import { FileSystemService, PROJECTS_ROOT } from './FileSystemService';
 
 export interface ChangedFile {
   path: string;
   status: 'modified' | 'added' | 'deleted' | 'untracked';
+  addedLines?: number;
+  removedLines?: number;
+  modifiedLines?: number;
+  totalChangedLines?: number;
 }
 
+const emptyLineStats = () => ({
+  addedLines: 0,
+  removedLines: 0,
+  modifiedLines: 0,
+  totalChangedLines: 0,
+});
+
+const countTextLines = (content: string) => {
+  const normalized = String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!normalized) return 0;
+  const lines = normalized.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+};
+
+const lineStatsFromNumstat = (output: string) => {
+  const line = output.split('\n').find(item => item.trim());
+  if (!line) return emptyLineStats();
+
+  const [rawAdded, rawRemoved] = line.trim().split(/\s+/);
+  if (rawAdded === '-' || rawRemoved === '-') return emptyLineStats();
+
+  const rawAddedLines = Number(rawAdded);
+  const rawRemovedLines = Number(rawRemoved);
+  if (!Number.isFinite(rawAddedLines) || !Number.isFinite(rawRemovedLines)) return emptyLineStats();
+
+  const modifiedLines = Math.min(rawAddedLines, rawRemovedLines);
+  const addedLines = Math.max(0, rawAddedLines - modifiedLines);
+  const removedLines = Math.max(0, rawRemovedLines - modifiedLines);
+
+  return {
+    addedLines,
+    removedLines,
+    modifiedLines,
+    totalChangedLines: addedLines + removedLines + modifiedLines,
+  };
+};
+
 export const GitService = {
-  /**
-   * Clones a repository into a specific project directory.
-   */
-  async clone(projectId: string, url: string, branch: string = 'main'): Promise<void> {
-    const fs = new ExpoFSAdapter(projectId);
+  
+  async runLinuxGit(projectId: string, args: string[]): Promise<string> {
+    await NodeRunner.init();
     
-    // Convert github.com URL to allow CORS if needed, or rely on corsProxy
-    // Isomorphic-git needs a cors proxy for browser environments. 
-    // In React Native (mobile), fetch doesn't have CORS restrictions, 
-    // but isomorphic-git's http plugin might still enforce it if it thinks it's a browser.
-    
-    await git.clone({
-      fs,
-      http,
-      dir: '/',
-      url,
-      ref: branch,
-      singleBranch: true,
-      depth: 1,
-      corsProxy: 'https://cors.isomorphic-git.org'
-    });
-  },
-
-  /**
-   * Inicializa um repositório git vazio localmente e adiciona um remote.
-   */
-  async initAndAddRemote(projectId: string, url: string, branch: string = 'main'): Promise<void> {
-    const fs = new ExpoFSAdapter(projectId);
-    
-    // Initialize empty git repo
-    await git.init({ fs, dir: '/', defaultBranch: branch });
-    
-    // Add remote
-    await git.addRemote({
-      fs,
-      dir: '/',
-      remote: 'origin',
-      url
-    });
-  },
-
-  /**
-   * Retrieves a list of modified, added, and deleted files using isomorphic-git statusMatrix.
-   */
-  async getChangedFiles(projectId: string): Promise<ChangedFile[]> {
-    const fs = new ExpoFSAdapter(projectId);
-    const changes: ChangedFile[] = [];
-
-    try {
-      const matrix = await git.statusMatrix({ fs, dir: '/' });
+    return new Promise((resolve, reject) => {
+      const reqId = Math.random().toString(36).substring(7);
       
-      for (const row of matrix) {
-        const [filepath, headStatus, workdirStatus, stageStatus] = row;
-        
-        // Skip metadata and hidden files
-        if (filepath === 'devflux.json' || filepath.startsWith('.git/')) continue;
-        if (filepath.startsWith('node_modules/') || filepath.startsWith('.expo/')) continue;
-        
-        // headStatus: 0=absent, 1=present
-        // workdirStatus: 0=absent, 1=identical, 2=modified
-        // stageStatus: 0=absent, 1=identical, 2=modified, 3=added
-        
-        if (headStatus === 1 && workdirStatus === 1 && stageStatus === 1) {
-          // Unmodified
-          continue;
+      const unsubscribe = NodeRunner.addListener((msg: any) => {
+        if (msg.type === 'LINUX_GIT_RESULT' && msg.reqId === reqId) {
+          unsubscribe();
+          if (msg.error) {
+             reject(new Error(msg.error));
+          } else {
+             resolve(msg.payload || '');
+          }
         }
+      });
+      
+      NodeRunner.send({
+        type: 'LINUX_GIT_COMMAND',
+        reqId,
+        projectsRoot: PROJECTS_ROOT,
+        cwd: `${PROJECTS_ROOT}${projectId}`,
+        args
+      });
+    });
+  },
 
-        if (headStatus === 0 && workdirStatus === 2 && stageStatus === 0) {
-          changes.push({ path: filepath, status: 'untracked' });
-        } else if (headStatus === 1 && workdirStatus === 2) {
-          changes.push({ path: filepath, status: 'modified' });
-        } else if (headStatus === 1 && workdirStatus === 0) {
-          changes.push({ path: filepath, status: 'deleted' });
-        } else if (stageStatus === 3) {
-          changes.push({ path: filepath, status: 'added' });
-        } else {
-           // Other modified states
-           changes.push({ path: filepath, status: 'modified' });
+  async clone(projectId: string, url: string, branch: string = 'main'): Promise<void> {
+    const { GithubService } = await import('./GithubService');
+    const token = await GithubService.getToken();
+    
+    // Inject token into URL for authentication (works for private repos)
+    let authUrl = url;
+    if (token && url.startsWith('https://github.com/')) {
+        authUrl = url.replace('https://github.com/', `https://${token}@github.com/`);
+    }
+
+    await NodeRunner.init();
+    
+    return new Promise((resolve, reject) => {
+      const reqId = Math.random().toString(36).substring(7);
+      
+      const unsubscribe = NodeRunner.addListener((msg: any) => {
+        if (msg.type === 'LINUX_GIT_RESULT' && msg.reqId === reqId) {
+          unsubscribe();
+          if (msg.error) reject(new Error(msg.error));
+          else resolve();
         }
+      });
+      
+      NodeRunner.send({
+        type: 'LINUX_GIT_COMMAND',
+        reqId,
+        projectsRoot: PROJECTS_ROOT,
+        cwd: PROJECTS_ROOT,
+        args: ['clone', '--depth', '1', '-b', branch, authUrl, projectId]
+      });
+    });
+  },
+
+  async initAndAddRemote(projectId: string, url: string, branch: string = 'main'): Promise<void> {
+    await this.runLinuxGit(projectId, ['init', '-b', branch]);
+    await this.runLinuxGit(projectId, ['remote', 'add', 'origin', url]);
+  },
+
+  async getChangedFiles(projectId: string): Promise<ChangedFile[]> {
+    try {
+      const output = await this.runLinuxGit(projectId, ['status', '--porcelain']);
+      const changes: ChangedFile[] = [];
+      const lines = output.split('\n');
+      
+      for (let line of lines) {
+        if (!line.trim()) continue;
+        const status = line.substring(0, 2);
+        const file = line.substring(3).trim();
+        
+        let parsedStatus: ChangedFile['status'] = 'modified';
+        if (status === '??') parsedStatus = 'untracked';
+        else if (status.includes('A')) parsedStatus = 'added';
+        else if (status.includes('D')) parsedStatus = 'deleted';
+        else if (status.includes('M')) parsedStatus = 'modified';
+        
+        changes.push({ path: file, status: parsedStatus });
       }
-    } catch (e: any) {
-      if (e.code === 'NotFoundError' || e.message.includes('NotFoundError') || e.message.includes('File not found')) {
-        // Repository is empty (no HEAD). Fallback to listing all files as untracked.
-        try {
-          const { FileSystemService } = await import('./FileSystemService');
-          const tree = await FileSystemService.getProjectFileTree(projectId);
-          
-          const flattenTree = (nodes: any[]): void => {
-            for (const node of nodes) {
-              if (node.type === 'file') {
-                changes.push({ path: node.path, status: 'untracked' });
-              } else if (node.children) {
-                flattenTree(node.children);
-              }
-            }
-          };
-          flattenTree(tree);
-        } catch(fallbackErr) {
-          console.error('[GitService] Fallback getChangedFiles failed:', fallbackErr);
-        }
-      } else {
-        console.error('[GitService] Error getting status:', e);
+      return await Promise.all(changes.map(async change => ({
+        ...change,
+        ...(await this.getChangedFileLineStats(projectId, change)),
+      })));
+    } catch(e: any) {
+       console.error('[GitService] Error getting status:', e);
+       // Tratamento de pasta não sendo repositório git
+       if (e.message.includes('not a git repository')) {
+          // Poderia retornar untracked tudo aqui, mas vamos retornar vazio por enquanto.
+       }
+       return [];
+    }
+  },
+
+  async getChangedFileLineStats(projectId: string, change: ChangedFile) {
+    if (!change.path) return emptyLineStats();
+
+    if (change.status === 'untracked') {
+      try {
+        const content = await FileSystemService.readFile(projectId, change.path);
+        const addedLines = countTextLines(content);
+        return { addedLines, removedLines: 0, modifiedLines: 0, totalChangedLines: addedLines };
+      } catch (e) {
+        return emptyLineStats();
       }
     }
 
-    return changes;
+    try {
+      const output = await this.runLinuxGit(projectId, ['diff', '--numstat', 'HEAD', '--', change.path]);
+      const stats = lineStatsFromNumstat(output);
+      if (stats.totalChangedLines > 0 || change.status === 'deleted') return stats;
+    } catch (e) {}
+
+    if (change.status === 'added') {
+      try {
+        const content = await FileSystemService.readFile(projectId, change.path);
+        const addedLines = countTextLines(content);
+        return { addedLines, removedLines: 0, modifiedLines: 0, totalChangedLines: addedLines };
+      } catch (e) {}
+    }
+
+    return emptyLineStats();
   },
 
-  /**
-   * Commits the current working directory changes.
-   */
   async commit(
     projectId: string, 
     message: string, 
     authorName: string, 
     authorEmail: string
   ): Promise<string> {
-    const fs = new ExpoFSAdapter(projectId);
-
     // Add all modified and untracked files
-    const changes = await this.getChangedFiles(projectId);
+    await this.runLinuxGit(projectId, ['add', '-A']);
     
-    for (const change of changes) {
-      if (change.status === 'deleted') {
-        await git.remove({ fs, dir: '/', filepath: change.path });
-      } else {
-        await git.add({ fs, dir: '/', filepath: change.path });
-      }
-    }
-
+    // Configurar author localmente
+    await this.runLinuxGit(projectId, ['config', 'user.name', `"${authorName}"`]);
+    await this.runLinuxGit(projectId, ['config', 'user.email', `"${authorEmail}"`]);
+    
     // Create commit
-    const sha = await git.commit({
-      fs,
-      dir: '/',
-      message,
-      author: {
-        name: authorName,
-        email: authorEmail,
-      }
-    });
-
-    return sha;
+    const output = await this.runLinuxGit(projectId, ['commit', '-m', `"${message.replace(/"/g, '\\"')}"`]);
+    return output;
   },
 
-  /**
-   * Pushes the committed changes back to GitHub.
-   */
   async push(
     projectId: string, 
     branch: string = 'main'
   ): Promise<void> {
-    const fs = new ExpoFSAdapter(projectId);
+    const { GithubService } = await import('./GithubService');
     const token = await GithubService.getToken();
-
-    if (!token) {
-      throw new Error('Não autenticado com o GitHub');
+    
+    // Configura o remote origin para usar o token temporariamente (isso resolve os problemas de senha)
+    if (token) {
+       const remoteUrl = await this.runLinuxGit(projectId, ['config', '--get', 'remote.origin.url']);
+       if (remoteUrl && remoteUrl.startsWith('https://github.com/')) {
+          const authUrl = remoteUrl.trim().replace('https://github.com/', `https://${token}@github.com/`);
+          await this.runLinuxGit(projectId, ['remote', 'set-url', 'origin', authUrl]);
+       }
     }
-
-    await git.push({
-      fs,
-      http,
-      dir: '/',
-      remote: 'origin',
-      ref: branch,
-      onAuth: () => ({ username: token }),
-      corsProxy: 'https://cors.isomorphic-git.org'
-    });
+    
+    await this.runLinuxGit(projectId, ['push', 'origin', branch]);
   },
   
-  /**
-   * Pulls the latest changes from GitHub.
-   */
   async pull(
     projectId: string, 
     branch: string = 'main',
     authorName: string, 
     authorEmail: string
   ): Promise<void> {
-    const fs = new ExpoFSAdapter(projectId);
+    const { GithubService } = await import('./GithubService');
     const token = await GithubService.getToken();
-
-    await git.pull({
-      fs,
-      http,
-      dir: '/',
-      ref: branch,
-      singleBranch: true,
-      author: {
-        name: authorName,
-        email: authorEmail,
-      },
-      onAuth: () => token ? { username: token } : undefined,
-      corsProxy: 'https://cors.isomorphic-git.org'
-    });
+    if (token) {
+       const remoteUrl = await this.runLinuxGit(projectId, ['config', '--get', 'remote.origin.url']);
+       if (remoteUrl && remoteUrl.startsWith('https://github.com/')) {
+          const authUrl = remoteUrl.trim().replace('https://github.com/', `https://${token}@github.com/`);
+          await this.runLinuxGit(projectId, ['remote', 'set-url', 'origin', authUrl]);
+       }
+    }
+    await this.runLinuxGit(projectId, ['pull', 'origin', branch]);
   },
 
-  /**
-   * Reverts uncommitted changes to a file.
-   */
   async revertFile(projectId: string, filepath: string): Promise<void> {
-    const fs = new ExpoFSAdapter(projectId);
-    await git.checkout({
-      fs,
-      dir: '/',
-      filepaths: [filepath],
-      force: true
-    });
+    await this.runLinuxGit(projectId, ['checkout', '--', filepath]);
   },
 
-  /**
-   * Gets the content of a file from HEAD.
-   */
   async getFileFromHead(projectId: string, filepath: string): Promise<string> {
-    const fs = new ExpoFSAdapter(projectId);
     try {
-      const { object: blob } = await git.readObject({
-        fs,
-        dir: '/',
-        oid: 'HEAD',
-        filepath
-      });
-      return new TextDecoder('utf8').decode(blob as Uint8Array);
+      const output = await this.runLinuxGit(projectId, ['show', `HEAD:${filepath}`]);
+      return output;
     } catch (e) {
       return ''; // File might be new/untracked
     }
   }
 };
+

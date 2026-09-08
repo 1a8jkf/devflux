@@ -13,6 +13,10 @@ export const translations = {
 export type TranslationDictionary = typeof pt;
 
 export function getTranslation(dict: any, key: string): string {
+  if (dict && typeof dict === 'object' && key in dict && typeof dict[key] === 'string') {
+    return dict[key];
+  }
+
   const keys = key.split('.');
   let result = dict;
   for (const k of keys) {

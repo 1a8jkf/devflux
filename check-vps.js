@@ -1,13 +1,20 @@
 const { NodeSSH } = require('node-ssh');
 const ssh = new NodeSSH();
 
-const host = '82.29.61.16';
-const username = 'root';
-const password = 's/,Ea;+C@PKXZr4m';
+const host = process.env.DEVFLUX_VPS_HOST;
+const username = process.env.DEVFLUX_VPS_USER;
+const password = process.env.DEVFLUX_VPS_PASSWORD;
+
+function requireSshConfig() {
+  if (!host || !username || !password) {
+    throw new Error('Configure DEVFLUX_VPS_HOST, DEVFLUX_VPS_USER e DEVFLUX_VPS_PASSWORD antes de rodar este script.');
+  }
+}
 
 async function check() {
   console.log('🔗 Conectando ao VPS...');
   try {
+    requireSshConfig();
     await ssh.connect({ host, username, password });
     
     console.log('--- Verificando Firewall (UFW) ---');

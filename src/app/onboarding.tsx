@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, BackHandler, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLanguage } from '../contexts/LanguageContext';
 
 const { width } = Dimensions.get('window');
 
 const SLIDES = [
   {
     id: 1,
-    title: 'Bem-vindo ao CodeFlex',
+    title: 'Bem-vindo ao DevFlux',
     desc: 'O Cloud IDE de bolso. Construa aplicações completas de onde estiver, mesmo sem internet.',
     icon: 'Layout' as any,
     color: '#3498DB'
@@ -38,8 +39,23 @@ export default function OnboardingScreen() {
   const styles = getStyles(theme);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
   
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Android hardware back button — go to previous slide or block exit
+  React.useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const onBackPress = () => {
+      if (currentIndex > 0) {
+        setCurrentIndex(currentIndex - 1);
+        return true;
+      }
+      return true; // Block exit during onboarding
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [currentIndex]);
 
   const handleNext = async () => {
     if (currentIndex < SLIDES.length - 1) {
@@ -60,8 +76,8 @@ export default function OnboardingScreen() {
             <Icon name={slide.icon} size={64} color={slide.color} outline={false} />
           </View>
         </View>
-        <Text style={styles.title}>{slide.title}</Text>
-        <Text style={styles.desc}>{slide.desc}</Text>
+        <Text style={styles.title}>{t(slide.title)}</Text>
+        <Text style={styles.desc}>{t(slide.desc)}</Text>
       </View>
 
       <View style={styles.footer}>
@@ -78,7 +94,7 @@ export default function OnboardingScreen() {
         </View>
         
         <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
-          <Text style={styles.nextText}>{currentIndex === SLIDES.length - 1 ? 'COMEÇAR' : 'PRÓXIMO'}</Text>
+          <Text style={styles.nextText}>{currentIndex === SLIDES.length - 1 ? t('COMEÇAR') : t('PRÓXIMO')}</Text>
         </TouchableOpacity>
       </View>
     </View>

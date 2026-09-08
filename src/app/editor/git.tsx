@@ -8,11 +8,13 @@ import { GitService, ChangedFile } from '../../services/GitService';
 import { GithubService } from '../../services/GithubService';
 import { FileSystemService, ProjectInfo } from '../../services/FileSystemService';
 import { MonacoEditor } from '../../components/MonacoEditor';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function GitScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const { projectId } = useLocalSearchParams<{ projectId: string }>();
+  const { t } = useLanguage();
 
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [repoUrlToConnect, setRepoUrlToConnect] = useState('');
@@ -54,7 +56,7 @@ export default function GitScreen() {
       await loadProject();
       await loadChanges();
     } catch (e: any) {
-      Alert.alert('Erro', e.message);
+      Alert.alert(t('Erro'), e.message);
       setLoading(false);
     }
   };
@@ -67,7 +69,7 @@ export default function GitScreen() {
       setChanges(changedFiles);
     } catch (e) {
       console.error(e);
-      Alert.alert('Erro', 'Não foi possível carregar as alterações.');
+      Alert.alert(t('Erro'), t('git.loadError', 'Não foi possível carregar as alterações.'));
     } finally {
       setLoading(false);
     }
@@ -75,11 +77,11 @@ export default function GitScreen() {
 
   const handleCommit = async () => {
     if (!message.trim()) {
-      Alert.alert('Erro', 'Digite uma mensagem de commit.');
+      Alert.alert(t('Erro'), t('git.emptyCommitMessage', 'Digite uma mensagem de commit.'));
       return;
     }
     if (changes.length === 0) {
-      Alert.alert('Aviso', 'Nenhuma alteração para commitar.');
+      Alert.alert(t('Aviso'), t('git.noChanges', 'Nenhuma alteração para commitar.'));
       return;
     }
     
@@ -93,11 +95,11 @@ export default function GitScreen() {
         user.login + '@users.noreply.github.com'
       );
       setMessage('');
-      Alert.alert('Sucesso', 'Commit criado com sucesso!');
+      Alert.alert(t('Sucesso'), t('git.commitSuccess', 'Commit criado com sucesso!'));
       await loadChanges();
     } catch (e: any) {
       console.error(e);
-      Alert.alert('Erro no commit', e.message);
+      Alert.alert(t('Erro no commit'), e.message);
     } finally {
       setIsCommitting(false);
     }
@@ -107,25 +109,25 @@ export default function GitScreen() {
     setIsPushing(true);
     try {
       await GitService.push(projectId);
-      Alert.alert('Sucesso', 'Alterações enviadas para o GitHub!');
+      Alert.alert(t('Sucesso'), t('git.pushSuccess', 'Alterações enviadas para o GitHub!'));
     } catch (e: any) {
       console.error(e);
-      Alert.alert('Erro no push', e.message);
+      Alert.alert(t('Erro no push'), e.message);
     } finally {
       setIsPushing(false);
     }
   };
 
   const handleRevert = (filepath: string) => {
-    Alert.alert('Reverter Arquivo', `Deseja descartar todas as alterações em ${filepath}?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Reverter', style: 'destructive', onPress: async () => {
+    Alert.alert(t('Reverter Arquivo'), `${t('git.revertConfirm', 'Deseja descartar todas as alterações em')} ${filepath}?`, [
+      { text: t('Cancelar'), style: 'cancel' },
+      { text: t('Reverter'), style: 'destructive', onPress: async () => {
         setLoading(true);
         try {
           await GitService.revertFile(projectId, filepath);
           await loadChanges();
         } catch (e: any) {
-          Alert.alert('Erro', 'Falha ao reverter arquivo: ' + e.message);
+          Alert.alert(t('Erro'), `${t('git.revertError', 'Falha ao reverter arquivo:')} ${e.message}`);
           setLoading(false);
         }
       }}
@@ -142,7 +144,7 @@ export default function GitScreen() {
       setDiffCurrent(currentCode);
       setDiffFile(filepath);
     } catch (e: any) {
-      Alert.alert('Erro', 'Não foi possível gerar diff: ' + e.message);
+      Alert.alert(t('Erro'), `${t('git.diffError', 'Não foi possível gerar diff:')} ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -152,11 +154,11 @@ export default function GitScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Vincular GitHub</Text>
+          <Text style={styles.title}>{t('Vincular GitHub')}</Text>
         </View>
         <View style={{ padding: 20 }}>
           <Text style={{ color: theme.colors.textPrimary, marginBottom: 12, fontFamily: theme.typography.ui, fontSize: 15, lineHeight: 22 }}>
-            Este projeto não está vinculado a um repositório remoto.{'\n'}Insira a URL do repositório para conectar e monitorar alterações com precisão.
+            {t('git.linkDesc', 'Este projeto não está vinculado a um repositório remoto.\nInsira a URL do repositório para conectar e monitorar alterações com precisão.')}
           </Text>
           <TextInput
             style={[styles.input, { minHeight: 44, padding: 12, backgroundColor: theme.colors.bgSurface, borderRadius: 8, marginBottom: 12 }]}
@@ -167,7 +169,7 @@ export default function GitScreen() {
             autoCapitalize="none"
           />
           <TouchableOpacity style={styles.commitBtn} onPress={handleConnectRepo} disabled={loading}>
-            <Text style={styles.commitBtnText}>{loading ? 'Conectando...' : 'Conectar Repositório'}</Text>
+            <Text style={styles.commitBtnText}>{loading ? t('Conectando...') : t('Conectar Repositório')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -177,7 +179,7 @@ export default function GitScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Controle de Versão (Git)</Text>
+        <Text style={styles.title}>{t('Controle de Versão (Git)')}</Text>
         <View style={styles.branchPill}>
           <Icon name="GitBranch" size={14} color={theme.colors.accentBlue} />
           <Text style={styles.branchName}>main</Text>
@@ -188,7 +190,7 @@ export default function GitScreen() {
         <View style={styles.commitArea}>
           <TextInput
             style={styles.input}
-            placeholder="Mensagem do commit..."
+            placeholder={t('Mensagem do commit...')}
             placeholderTextColor={theme.colors.textSecondary}
             value={message}
             onChangeText={setMessage}
@@ -200,7 +202,7 @@ export default function GitScreen() {
             disabled={isCommitting}
           >
             <Text style={styles.commitBtnText}>
-              {isCommitting ? 'Commitando...' : 'Commit'}
+              {isCommitting ? t('Commitando...') : t('Commit')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -216,16 +218,16 @@ export default function GitScreen() {
             ) : (
               <Icon name="ArrowUpCircle" size={24} color={theme.colors.textPrimary} />
             )}
-            <Text style={styles.actionGridText}>{isPushing ? 'Enviando...' : 'Push'}</Text>
+            <Text style={styles.actionGridText}>{isPushing ? t('Enviando...') : t('Push')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionGridBtn} onPress={loadChanges}>
             <Icon name="RefreshCw" size={24} color={theme.colors.textPrimary} />
-            <Text style={styles.actionGridText}>Refresh</Text>
+            <Text style={styles.actionGridText}>{t('Refresh')}</Text>
           </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionTitle}>
-          Arquivos Alterados ({loading ? '...' : changes.length})
+          {t('Arquivos Alterados')} ({loading ? '...' : changes.length})
         </Text>
         
         <View style={styles.changesList}>
@@ -237,7 +239,7 @@ export default function GitScreen() {
             <View style={{ padding: 32, alignItems: 'center' }}>
               <Icon name="CheckCircle" size={48} color={theme.colors.textSecondary} style={{ marginBottom: 16 }} />
               <Text style={{ color: theme.colors.textSecondary, textAlign: 'center', fontFamily: theme.typography.ui, fontSize: 15, marginBottom: 24 }}>
-                Nenhuma alteração detectada.
+                {t('Nenhuma alteração detectada.')}
               </Text>
               <TouchableOpacity 
                 style={[styles.commitBtn, { width: '80%', backgroundColor: theme.colors.bgSurface, borderWidth: 1, borderColor: theme.colors.border }]} 
@@ -249,7 +251,7 @@ export default function GitScreen() {
                 ) : (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                     <Icon name="ArrowUpCircle" size={18} color={theme.colors.textPrimary} style={{ marginRight: 8 }} />
-                    <Text style={[styles.commitBtnText, { color: theme.colors.textPrimary }]}>Forçar Push</Text>
+                    <Text style={[styles.commitBtnText, { color: theme.colors.textPrimary }]}>{t('Forçar Push')}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -284,7 +286,7 @@ export default function GitScreen() {
       {diffFile && (
         <View style={styles.diffModalContainer}>
           <View style={styles.diffModalHeader}>
-            <Text style={styles.diffModalTitle}>Diff: {diffFile}</Text>
+            <Text style={styles.diffModalTitle}>{t('Diff:')} {diffFile}</Text>
             <TouchableOpacity onPress={() => setDiffFile(null)} style={{ padding: 4 }}>
               <Icon name="X" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>

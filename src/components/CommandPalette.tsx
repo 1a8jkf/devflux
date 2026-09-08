@@ -5,6 +5,7 @@ import { AppTheme } from '../theme';
 import { Icon } from './Icon';
 import { useCommandPalette } from '../contexts/CommandPaletteContext';
 import { useRouter } from 'expo-router';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface Command {
   id: string;
@@ -20,6 +21,7 @@ export const CommandPalette: React.FC = () => {
   const { isVisible, closePalette } = useCommandPalette();
   const [search, setSearch] = useState('');
   const router = useRouter();
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (isVisible) {
@@ -42,7 +44,7 @@ export const CommandPalette: React.FC = () => {
     },
     {
       id: 'ai',
-      title: 'Assistente IA (CodeFlex AI)',
+      title: 'Assistente IA (DevFlux AI)',
       icon: 'Sparkles',
       action: () => { router.push('/ai-panel'); closePalette(); }
     },
@@ -73,7 +75,7 @@ export const CommandPalette: React.FC = () => {
   ];
 
   const filteredCommands = commands.filter(cmd => 
-    cmd.title.toLowerCase().includes(search.toLowerCase())
+    t(cmd.title).toLowerCase().includes(search.toLowerCase())
   );
 
   if (!isVisible) return null;
@@ -92,7 +94,7 @@ export const CommandPalette: React.FC = () => {
                   <Icon name="Search" size={20} color={theme.colors.textSecondary} />
                   <TextInput
                     style={styles.searchInput}
-                    placeholder="O que você precisa fazer?"
+                    placeholder={t('O que você precisa fazer?')}
                     placeholderTextColor={theme.colors.textSecondary}
                     value={search}
                     onChangeText={setSearch}
@@ -109,12 +111,12 @@ export const CommandPalette: React.FC = () => {
                   keyboardShouldPersistTaps="handled"
                   contentContainerStyle={styles.listContent}
                   ListEmptyComponent={() => (
-                    <Text style={styles.emptyText}>Nenhum comando encontrado.</Text>
+                    <Text style={styles.emptyText}>{t('Nenhum comando encontrado.')}</Text>
                   )}
                   renderItem={({ item }) => (
                     <TouchableOpacity style={styles.commandItem} onPress={item.action}>
                       <Icon name={item.icon} size={18} color={theme.colors.textPrimary} />
-                      <Text style={styles.commandTitle}>{item.title}</Text>
+                      <Text style={styles.commandTitle}>{t(item.title)}</Text>
                       <Icon name="ChevronRight" size={16} color={theme.colors.textSecondary} />
                     </TouchableOpacity>
                   )}

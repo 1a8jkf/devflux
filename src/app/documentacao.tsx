@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface ArticleBlock {
   type: 'p' | 'h1' | 'h2' | 'code' | 'li';
@@ -45,14 +46,14 @@ const DOCS_DATA: Category[] = [
     ]
   },
   {
-    id: 'bridge', title: 'CodeFlex Bridge (Sync PC)', icon: 'RefreshCw',
+    id: 'bridge', title: 'DevFlux Bridge (Sync PC)', icon: 'RefreshCw',
     articles: [
       {
         id: 'what-is-bridge', title: 'Conectando o celular ao PC',
         content: [
           { type: 'p', text: 'O LiveSync (Bridge) permite que você digite o código no teclado e tela do seu PC e veja as alterações instantaneamente aplicadas no celular.' },
           { type: 'h2', text: 'Como usar' },
-          { type: 'li', text: '1. Instale a extensão "CodeFlex Sync" no seu VS Code do computador.' },
+          { type: 'li', text: '1. Instale a extensão "DevFlux Sync" no seu VS Code do computador.' },
           { type: 'li', text: '2. Na tela inicial do DevFlux, toque em "Live Coding / Sync PC".' },
           { type: 'li', text: '3. Aponte a câmera do celular para o QR Code gerado no VS Code.' },
           { type: 'p', text: 'Pronto! Qualquer arquivo modificado no PC será automaticamente refletido no app móvel, garantindo um hot-reload super rápido.' }
@@ -117,6 +118,7 @@ const DOCS_DATA: Category[] = [
 export default function DocumentacaoScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
 
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeArticle, setActiveArticle] = useState<Article | null>(null);
@@ -135,8 +137,8 @@ export default function DocumentacaoScreen() {
             <Icon name={cat.icon as any} size={24} color={theme.colors.accentBlue} />
           </View>
           <View style={styles.categoryInfo}>
-            <Text style={styles.categoryTitle}>{cat.title}</Text>
-            <Text style={styles.categoryCount}>{cat.articles.length} artigos</Text>
+            <Text style={styles.categoryTitle}>{t(cat.title)}</Text>
+            <Text style={styles.categoryCount}>{cat.articles.length} {t('artigos')}</Text>
           </View>
           <Icon name="ChevronRight" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
@@ -151,15 +153,15 @@ export default function DocumentacaoScreen() {
         onPress={() => setActiveCategory(null)}
       >
         <Icon name="ArrowLeft" size={20} color={theme.colors.textPrimary} />
-        <Text style={styles.backText}>Voltar às categorias</Text>
+        <Text style={styles.backText}>{t('Voltar às categorias')}</Text>
       </TouchableOpacity>
       
-      <Text style={styles.articleListTitle}>Artigos de {currentCat?.title}</Text>
+      <Text style={styles.articleListTitle}>{t('Artigos de')} {currentCat ? t(currentCat.title) : ''}</Text>
       
       {currentCat?.articles.map((art) => (
         <TouchableOpacity key={art.id} style={styles.articleCard} onPress={() => setActiveArticle(art)}>
           <Icon name="FileText" size={20} color={theme.colors.textSecondary} />
-          <Text style={styles.articleTitle}>{art.title}</Text>
+          <Text style={styles.articleTitle}>{t(art.title)}</Text>
           <Icon name="ChevronRight" size={16} color={theme.colors.textSecondary} />
         </TouchableOpacity>
       ))}
@@ -175,20 +177,20 @@ export default function DocumentacaoScreen() {
           onPress={() => setActiveArticle(null)}
         >
           <Icon name="ArrowLeft" size={20} color={theme.colors.textPrimary} />
-          <Text style={styles.backText}>Voltar para {currentCat?.title}</Text>
+          <Text style={styles.backText}>{t('Voltar para')} {currentCat ? t(currentCat.title) : ''}</Text>
         </TouchableOpacity>
         
-        <Text style={styles.readingTitle}>{activeArticle.title}</Text>
+        <Text style={styles.readingTitle}>{t(activeArticle.title)}</Text>
         
         <View style={styles.readingContent}>
           {activeArticle.content.map((block, idx) => {
             switch(block.type) {
               case 'p':
-                return <Text key={idx} style={styles.textP}>{block.text}</Text>;
+                return <Text key={idx} style={styles.textP}>{t(block.text)}</Text>;
               case 'h2':
-                return <Text key={idx} style={styles.textH2}>{block.text}</Text>;
+                return <Text key={idx} style={styles.textH2}>{t(block.text)}</Text>;
               case 'li':
-                return <Text key={idx} style={styles.textLi}>{block.text}</Text>;
+                return <Text key={idx} style={styles.textLi}>{t(block.text)}</Text>;
               case 'code':
                 return (
                   <View key={idx} style={styles.codeBlock}>
@@ -207,8 +209,8 @@ export default function DocumentacaoScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Documentação</Text>
-        <Text style={styles.subtitle}>Tudo que você precisa para dominar o DevFlux.</Text>
+        <Text style={styles.title}>{t('Documentação')}</Text>
+        <Text style={styles.subtitle}>{t('Tudo que você precisa para dominar o DevFlux.')}</Text>
       </View>
 
       <View style={styles.content}>

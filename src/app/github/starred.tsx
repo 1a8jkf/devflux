@@ -4,10 +4,12 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { AppTheme } from '../../theme';
 import { GithubService, GithubRepo } from '../../services/GithubService';
 import { Icon } from '../../components/Icon';
+import { useLanguage } from '../../contexts/LanguageContext';
 
 export default function StarredScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
   
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,7 +49,7 @@ export default function StarredScreen() {
       <View style={styles.cardFooter}>
         <View style={{flexDirection: 'row', alignItems: 'center'}}>
           <Icon name="Star" size={12} color={theme.colors.textSecondary} />
-          <Text style={[styles.cardDate, {marginLeft: 4}]}>Favoritado</Text>
+          <Text style={[styles.cardDate, {marginLeft: 4}]}>{t('Favoritado')}</Text>
         </View>
         <Text style={styles.cardDate}>
           {new Date(item.updated_at).toLocaleDateString()}
@@ -65,7 +67,7 @@ export default function StarredScreen() {
       ) : repos.length === 0 ? (
         <View style={styles.center}>
           <Icon name="Star" size={48} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Você ainda não tem favoritos.</Text>
+          <Text style={styles.emptyText}>{t('Você ainda não tem favoritos.')}</Text>
         </View>
       ) : (
         <FlatList

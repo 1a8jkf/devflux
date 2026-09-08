@@ -3,25 +3,27 @@ import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'rea
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function SobreScreen() {
   const { theme, variant } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.hero}>
         <Image 
-          source={require('../../assets/top-bar-icon.png')} 
+          source={require('../../assets/images/devflux-logo.png')} 
           style={{ width: 48, height: 48, resizeMode: 'contain', marginRight: 16 }} 
         />
-        <Text style={styles.title}>CodeFlex</Text>
-        <Text style={styles.version}>Versão 1.0.0 (Build 42)</Text>
+        <Text style={styles.title}>DevFlux</Text>
+        <Text style={styles.version}>{t('Versão 1.0.0 (Build 42)')}</Text>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.description}>
-          O CodeFlex é a primeira IDE mobile de nível corporativo focada na tríade: Sincronização em tempo real (Bridge), Inteligência Artificial Integrada e Execução Local.
+          {t('O DevFlux é a primeira IDE mobile de nível corporativo focada na tríade: Sincronização em tempo real (Bridge), Inteligência Artificial Integrada e Execução Local.')}
         </Text>
       </View>
 
@@ -30,7 +32,7 @@ export default function SobreScreen() {
           <TouchableOpacity style={styles.linkRow}>
             <View style={styles.linkLeft}>
               <Icon name="Globe" size={20} color={theme.colors.textPrimary} />
-              <Text style={styles.linkText}>Site Oficial</Text>
+              <Text style={styles.linkText}>{t('Site Oficial')}</Text>
             </View>
             <Icon name="ExternalLink" size={16} color={theme.colors.textSecondary} />
           </TouchableOpacity>
@@ -38,7 +40,7 @@ export default function SobreScreen() {
           <TouchableOpacity style={styles.linkRow}>
             <View style={styles.linkLeft}>
               <Icon name="Twitter" size={20} color={theme.colors.textPrimary} />
-              <Text style={styles.linkText}>@CodeFlexIDE</Text>
+              <Text style={styles.linkText}>@DevFluxIDE</Text>
             </View>
             <Icon name="ExternalLink" size={16} color={theme.colors.textSecondary} />
           </TouchableOpacity>
@@ -46,7 +48,7 @@ export default function SobreScreen() {
           <TouchableOpacity style={[styles.linkRow, styles.lastLinkRow]}>
             <View style={styles.linkLeft}>
               <Icon name="Shield" size={20} color={theme.colors.textPrimary} />
-              <Text style={styles.linkText}>Política de Privacidade</Text>
+              <Text style={styles.linkText}>{t('Política de Privacidade')}</Text>
             </View>
             <Icon name="ExternalLink" size={16} color={theme.colors.textSecondary} />
           </TouchableOpacity>
@@ -54,8 +56,8 @@ export default function SobreScreen() {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>© 2026 CodeFlex Inc.</Text>
-        <Text style={styles.footerText}>Feito com ♥ para desenvolvedores.</Text>
+        <Text style={styles.footerText}>{t('© 2026 DevFlux Inc.')}</Text>
+        <Text style={styles.footerText}>{t('Feito com ♥ para desenvolvedores.')}</Text>
       </View>
     </ScrollView>
   );

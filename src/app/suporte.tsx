@@ -4,10 +4,12 @@ import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
 import { useRouter } from 'expo-router';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function SuporteScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
+  const { t } = useLanguage();
 
   const router = useRouter();
   const [message, setMessage] = useState('');
@@ -26,16 +28,16 @@ export default function SuporteScreen() {
           <View style={styles.iconContainer}>
             <Icon name="MessageSquare" size={32} color={theme.colors.accentBlue} />
           </View>
-          <Text style={styles.title}>Falar com Suporte</Text>
-          <Text style={styles.subtitle}>Nossa equipe de especialistas responderá ao seu email cadastrado em até 2 horas.</Text>
+          <Text style={styles.title}>{t('Falar com Suporte')}</Text>
+          <Text style={styles.subtitle}>{t('Nossa equipe de especialistas responderá ao seu email cadastrado em até 2 horas.')}</Text>
         </View>
 
         {!sent ? (
           <View style={styles.form}>
-            <Text style={styles.label}>Sua mensagem</Text>
+            <Text style={styles.label}>{t('Sua mensagem')}</Text>
             <TextInput
               style={styles.input}
-              placeholder="Descreva o problema ou dúvida..."
+              placeholder={t('Descreva o problema ou dúvida...')}
               placeholderTextColor={theme.colors.textSecondary}
               multiline
               textAlignVertical="top"
@@ -48,7 +50,7 @@ export default function SuporteScreen() {
               onPress={handleSend}
               disabled={message.trim().length === 0}
             >
-              <Text style={styles.btnText}>Enviar Mensagem</Text>
+              <Text style={styles.btnText}>{t('Enviar Mensagem')}</Text>
               <Icon name="Send" size={16} color="#FFF" />
             </TouchableOpacity>
           </View>
@@ -57,11 +59,11 @@ export default function SuporteScreen() {
             <View style={styles.successIcon}>
               <Icon name="Check" size={32} color={theme.colors.accentTeal} />
             </View>
-            <Text style={styles.successTitle}>Mensagem Enviada!</Text>
-            <Text style={styles.successDesc}>Obrigado por entrar em contato. Um ticket foi criado e você receberá atualizações no seu email.</Text>
+            <Text style={styles.successTitle}>{t('Mensagem Enviada!')}</Text>
+            <Text style={styles.successDesc}>{t('Obrigado por entrar em contato. Um ticket foi criado e você receberá atualizações no seu email.')}</Text>
             
             <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-              <Text style={styles.backBtnText}>Voltar para Ajuda</Text>
+              <Text style={styles.backBtnText}>{t('Voltar para Ajuda')}</Text>
             </TouchableOpacity>
           </View>
         )}

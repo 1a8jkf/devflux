@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { readAsStringAsync, writeAsStringAsync, documentDirectory } from 'expo-file-system/legacy';
+import { DebugService } from './DebugService';
 
 const IS_WEB = Platform.OS === 'web';
 const AUTH_FILE = IS_WEB ? 'DevFluxProjects/.github_auth' : `${documentDirectory || ''}DevFluxProjects/.github_auth`;
@@ -82,8 +83,12 @@ export const GithubService = {
   },
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const startedAt = Date.now();
     const token = await this.getToken();
-    if (!token) throw new Error('Not authenticated');
+    if (!token) {
+      DebugService.log('github', 'warn', 'GitHub solicitado sem autenticação.', { endpoint });
+      throw new Error('Not authenticated');
+    }
 
     const headers = {
       'Authorization': `Bearer ${token}`,
@@ -92,16 +97,31 @@ export const GithubService = {
       ...options.headers
     };
 
-    const res = await fetch(`https://api.github.com${endpoint}`, {
-      ...options,
-      headers
-    });
+    try {
+      const res = await fetch(`https://api.github.com${endpoint}`, {
+        ...options,
+        headers
+      });
 
-    if (!res.ok) {
-      throw new Error(`GitHub API Error: ${res.status} ${res.statusText}`);
+      const durationMs = Date.now() - startedAt;
+      if (!res.ok) {
+        DebugService.log('github', 'error', `Falha na API do GitHub: ${res.status} ${res.statusText}`, { endpoint, durationMs });
+        throw new Error(`GitHub API Error: ${res.status} ${res.statusText}`);
+      }
+      if (durationMs > 8000) {
+        DebugService.log('github', 'warn', 'Resposta do GitHub demorou mais que o esperado.', { endpoint, durationMs });
+      }
+
+      return res.json();
+    } catch (error: any) {
+      if (!String(error?.message || '').startsWith('GitHub API Error')) {
+        DebugService.log('github', 'error', `Falha de comunicação com GitHub: ${error?.message || String(error)}`, {
+          endpoint,
+          durationMs: Date.now() - startedAt,
+        });
+      }
+      throw error;
     }
-
-    return res.json();
   },
 
   async getUser(): Promise<GithubUser> {
@@ -129,8 +149,12 @@ export const GithubService = {
   },
 
   async getFileContent(fullName: string, path: string): Promise<string> {
+    const startedAt = Date.now();
     const token = await this.getToken();
-    if (!token) throw new Error('Not authenticated');
+    if (!token) {
+      DebugService.log('github', 'warn', 'Conteúdo do GitHub solicitado sem autenticação.', { repo: fullName, file: path });
+      throw new Error('Not authenticated');
+    }
 
     const headers = {
       'Authorization': `Bearer ${token}`,
@@ -142,8 +166,13 @@ export const GithubService = {
       headers
     });
 
+    const durationMs = Date.now() - startedAt;
     if (!res.ok) {
+      DebugService.log('github', 'error', `Arquivo do GitHub não carregou: ${res.status} ${res.statusText}`, { repo: fullName, file: path, durationMs });
       throw new Error(`GitHub API Error: ${res.status} ${res.statusText}`);
+    }
+    if (durationMs > 8000) {
+      DebugService.log('github', 'warn', 'Leitura de arquivo no GitHub demorou mais que o esperado.', { repo: fullName, file: path, durationMs });
     }
 
     return res.text();
@@ -232,5 +261,36 @@ export const GithubService = {
     });
     if (!res.ok) throw new Error('Failed to update ref');
     return res.json();
+  },
+
+  async commitFiles(fullName: string, branch: string, message: string, files: { path: string, content: string }[]): Promise<void> {
+    // 1. Get current commit
+    const ref = await this.getRef(fullName, branch);
+    const commitSha = ref.object.sha;
+
+    // 2. Get current tree
+    const commit = await this.getCommit(fullName, commitSha);
+    const baseTreeSha = commit.tree.sha;
+
+    // 3. Create blobs and tree
+    const tree: any[] = [];
+    for (const file of files) {
+      const blob = await this.createBlob(fullName, file.content);
+      tree.push({
+        path: file.path,
+        mode: '100644',
+        type: 'blob',
+        sha: blob.sha
+      });
+    }
+
+    // 4. Create new tree
+    const newTree = await this.createTree(fullName, baseTreeSha, tree);
+
+    // 5. Create new commit
+    const newCommit = await this.createCommit(fullName, message, newTree.sha, [commitSha]);
+
+    // 6. Update reference
+    await this.updateRef(fullName, branch, newCommit.sha);
   }
 };
