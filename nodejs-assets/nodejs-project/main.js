@@ -4,9 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { bootstrapLinux, isLinuxInstalled, getLinuxDir } = require('./linux-bootstrap');
+const { scriptArguments, terminalSize, writePtyInput } = require('./pty-session');
 
 let ptyProcesses = {};
-let currentInputLines = {};
+const ptyTerminals = {};
+let ptyToolsPromise = null;
+const npmOperations = new Map();
 let ptyOutputBuffers = {};
 let ptySilentStops = {};
 let bannerShown = false;
@@ -31,7 +34,7 @@ function stopPtySession(sessionId, options = {}) {
     try { ptyProcesses[sid].kill(); } catch (e) {}
     delete ptyProcesses[sid];
   }
-  delete currentInputLines[sid];
+  delete ptyTerminals[sid];
   if (options.clearBuffer !== false) delete ptyOutputBuffers[sid];
 }
 
@@ -47,42 +50,6 @@ function normalizeHostPath(value) {
 
 function shellQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
-}
-
-function getTrailingImeToken(line) {
-  const match = String(line || '').match(/([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_-]{2,})\.?$/u);
-  return match ? match[1] : '';
-}
-
-function sanitizePtyInput(sessionId, input) {
-  if (!input || input.length > 120) return input;
-  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(input)) return input;
-
-  let normalized = String(input);
-  const trailingToken = getTrailingImeToken(currentInputLines[sessionId] || '');
-  if (trailingToken && normalized.startsWith(trailingToken + '.')) return normalized.slice(trailingToken.length);
-  if (trailingToken && normalized === '.' + trailingToken) return '.';
-  if (trailingToken && normalized.startsWith('.' + trailingToken + '.')) {
-    return '.' + normalized.slice(trailingToken.length + 2);
-  }
-
-  normalized = normalized.replace(/(^|[\s"'([{<>=:;,])([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_-]{2,})\.\2(?=\.|$|[\s"'()\]}>;:,])/gu, '$1$2');
-  normalized = normalized.replace(/(^|[\s"'([{<>=:;,])([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_-]{2,})\2(?=\.)/gu, '$1$2');
-  return normalized;
-}
-
-function updateCurrentInputLine(sessionId, input) {
-  let next = String(currentInputLines[sessionId] || '');
-  for (const ch of String(input || '')) {
-    if (ch === '\r' || ch === '\n' || ch === '\x03') {
-      next = '';
-    } else if (ch === '\x7F' || ch === '\b') {
-      next = next.slice(0, -1);
-    } else if (ch >= ' ') {
-      next += ch;
-    }
-  }
-  currentInputLines[sessionId] = next.length > 300 ? next.slice(-300) : next;
 }
 
 function getProotEnv(appLibDir, extraEnv = {}) {
@@ -231,6 +198,7 @@ async function runLinuxCommand(command, options = {}) {
 
 
 const PACKAGE_COMMANDS = {
+  'util-linux-misc': ['script'],
   nodejs: ['node'],
   npm: ['npm', 'npx'],
   git: ['git'],
@@ -327,13 +295,6 @@ async function checkLinuxPackageStatus(packages) {
   return installed;
 }
 
-function refreshIdlePtyCommandCaches() {
-  Object.keys(ptyProcesses).forEach(sessionId => {
-    const proc = ptyProcesses[sessionId];
-    if (!proc || !proc.stdin || currentInputLines[sessionId]) return;
-    try { proc.stdin.write('hash -r\n'); } catch (e) {}
-  });
-}
 function buildSshInstallCommand(password) {
   if (password) {
     return 'if ! command -v ssh >/dev/null 2>&1 || ! command -v sshpass >/dev/null 2>&1; then apk update --no-cache >/dev/null 2>&1; apk add --no-cache openssh-client sshpass; fi';
@@ -495,7 +456,6 @@ rn_bridge.channel.on('message', async (msg) => {
           sendMessage('LINUX_INSTALL_LOG', `\r\nWarning: Package commands not immediately found in PATH: ${missingPackages.join(', ')}.\r\n`);
         }
 
-        refreshIdlePtyCommandCaches();
         sendMessage('LINUX_PACKAGES_STATUS', packageStatus);
         sendMessage('LINUX_INSTALL_DONE', { packages: packageStatus });
       } else {
@@ -656,64 +616,67 @@ rn_bridge.channel.on('message', async (msg) => {
       });
     }
 
+    else if (data.type === 'LINUX_NPM_CANCEL') {
+      const operation = npmOperations.get(data.reqId);
+      if (operation) {
+        operation.cancelled = true;
+        if (operation.process) {
+          try { process.kill(-operation.process.pid, 'SIGTERM'); }
+          catch (_) { operation.process.kill(); }
+        }
+      }
+    }
     else if (data.type === 'LINUX_NPM_COMMAND') {
-      const appLibDir = process.env.APP_NATIVE_LIB_DIR;
       const sid = data.reqId || Math.random().toString(36).substring(7);
-
-      if (!appLibDir) {
-         rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_NPM_RESULT', reqId: sid, error: 'APP_NATIVE_LIB_DIR not found' }));
-         return;
+      const operation = { cancelled: false, process: null };
+      npmOperations.set(sid, operation);
+      let finished = false;
+      let timeout;
+      const finish = (payload, error, code) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        npmOperations.delete(sid);
+        rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_NPM_RESULT', reqId: sid, payload, error, code }));
+      };
+      try {
+        const appLibDir = process.env.APP_NATIVE_LIB_DIR;
+        if (!appLibDir) throw new Error('APP_NATIVE_LIB_DIR not found');
+        const res = await bootstrapLinux(() => {});
+        if (!res.success) throw new Error('Bootstrap failed');
+        if (operation.cancelled) throw new Error('Operacao NPM cancelada.');
+        ensureNodeTooling(res.path);
+        const projectsRoot = normalizeHostPath(data.projectsRoot);
+        const cwd = normalizeHostPath(data.cwd);
+        if (!projectsRoot || !cwd || !path.resolve(cwd).startsWith(path.resolve(projectsRoot) + path.sep)) {
+          throw new Error('Diretorio NPM fora do projeto.');
+        }
+        const relativeCwd = path.relative(projectsRoot, cwd);
+        const spawnArgs = [
+          '--link2symlink', '-0', '-r', res.path, '-b', '/dev', '-b', '/proc', '-b', '/sys',
+          '-b', projectsRoot + ':/projects', '-b', cwd + ':/workspace', '-w', '/projects/' + relativeCwd,
+        ];
+        if (!Array.isArray(data.args) || data.args.some(arg => typeof arg !== 'string')) throw new Error('Argumentos NPM invalidos.');
+        const npmCommand = 'command -v npm >/dev/null 2>&1 || apk add --no-cache nodejs npm; exec npm ' + data.args.map(shellQuote).join(' ');
+        spawnArgs.push('/bin/sh', '-c', npmCommand);
+        let outData = '';
+        let errData = '';
+        const proc = spawn(path.join(appLibDir, 'libproot.so'), spawnArgs, { env: getProotEnv(appLibDir), detached: true });
+        operation.process = proc;
+        timeout = setTimeout(() => {
+          operation.cancelled = true;
+          try { process.kill(-proc.pid, 'SIGTERM'); } catch (_) { proc.kill(); }
+          finish(outData, 'NPM excedeu o tempo limite.', 1);
+        }, 295000);
+        proc.stdout.setEncoding('utf8');
+        proc.stderr.setEncoding('utf8');
+        proc.stdout.on('data', data => { outData = (outData + data).slice(-65536); });
+        proc.stderr.on('data', data => { errData = (errData + data).slice(-65536); });
+        proc.on('error', error => finish(outData, error.message, 1));
+        proc.on('close', code => finish(outData, operation.cancelled ? 'Operacao NPM cancelada.' : code !== 0 ? (errData || outData || 'NPM falhou.') : null, code));
+      } catch (error) {
+        finish('', error.message, 1);
       }
-
-      const res = await bootstrapLinux(() => {});
-      if (!res.success) {
-         rn_bridge.channel.send(JSON.stringify({ type: 'LINUX_NPM_RESULT', reqId: sid, error: 'Bootstrap failed' }));
-         return;
-      }
-
-      ensureNodeTooling(res.path);
-      const projectsRoot = normalizeHostPath(data.projectsRoot);
-      const cwd = normalizeHostPath(data.cwd);
-
-      let targetDir = '/workspace';
-      if (cwd && projectsRoot && cwd.startsWith(projectsRoot)) {
-          const relativeCwd = cwd.slice(projectsRoot.length).replace(/^\/+/, '');
-          targetDir = relativeCwd ? `/projects/${relativeCwd}` : '/projects';
-      }
-
-      const spawnCmd = path.join(appLibDir, 'libproot.so');
-      const spawnArgs = [
-        '--link2symlink', '-0', '-r', res.path,
-        '-b', '/dev', '-b', '/proc', '-b', '/sys'
-      ];
-      if (projectsRoot) {
-          spawnArgs.push('-b', `${projectsRoot}:/projects`);
-      }
-      if (cwd) {
-          spawnArgs.push('-b', `${cwd}:/workspace`);
-      }
-      spawnArgs.push('-w', targetDir);
-
-      let npmCommand = data.args ? `npm ${data.args.join(' ')}` : data.command;
-      spawnArgs.push('/bin/sh', '-c', npmCommand);
-
-      let outData = '';
-      let errData = '';
-      const proc = spawn(spawnCmd, spawnArgs, {
-        env: getProotEnv(appLibDir)
-      });
-
-      proc.stdout.on('data', d => outData += d.toString());
-      proc.stderr.on('data', d => errData += d.toString());
-      proc.on('close', (code) => {
-         rn_bridge.channel.send(JSON.stringify({
-           type: 'LINUX_NPM_RESULT',
-           reqId: sid,
-           payload: outData,
-           error: code !== 0 ? errData : null,
-           code
-         }));
-      });
     }
 
     else if (data.type === 'SHELL_PTY_START' || data.type === 'SHELL_PTY_ATTACH') {
@@ -749,16 +712,35 @@ rn_bridge.channel.on('message', async (msg) => {
 
       ensureNodeTooling(res.path);
 
-      // Prompt: keep the interactive shell readable on mobile.
-      const promptString = 'root# ';
+      // Expanded by the shell before every prompt, including after cd and failed commands.
+      const promptString = '$(pwd -P)# ';
       const shellCols = Math.max(32, Number(data.cols) || 80);
       const shellRows = Math.max(10, Number(data.rows) || 24);
 
       if (ptyProcesses[sid]) {
-         const replay = ptyOutputBuffers[sid] || promptString;
+         const replay = ptyOutputBuffers[sid] || '';
          rn_bridge.channel.send(JSON.stringify({ type: 'CMD_OUT', sessionId: sid, payload: replay }));
          return;
       }
+
+      try {
+        if (!ptyToolsPromise) {
+          ptyToolsPromise = runLinuxCommand([
+            'for tool in stty tty; do command -v "$tool" >/dev/null 2>&1 || { printf "Utilitario de terminal indisponivel no PATH do Alpine: %s\\n" "$tool" >&2; exit 127; }; done',
+            '/usr/bin/script --version >/dev/null 2>&1 || { apk add --no-cache util-linux-misc || exit $?; }',
+            '/usr/bin/script --version >/dev/null 2>&1 || { printf "script indisponivel apos preparar util-linux-misc.\\n" >&2; exit 127; }',
+          ].join('\n'))
+            .then(result => {
+              if (result.code !== 0) throw new Error(result.stderr || 'Falha ao preparar os utilitarios do terminal.');
+            })
+            .catch(error => { ptyToolsPromise = null; throw error; });
+        }
+        await ptyToolsPromise;
+      } catch (error) {
+        rn_bridge.channel.send(JSON.stringify({ type: 'SHELL_PTY_ERROR', sessionId: sid, error: error.message }));
+        return;
+      }
+      if (ptyProcesses[sid]) return;
 
       // First time spawning: show banner only once per app session
       if (!bannerShown) {
@@ -782,7 +764,7 @@ rn_bridge.channel.on('message', async (msg) => {
       }
       const profilePath = path.join(profileDir, 'devflux.sh');
       // Use project-specific history file so each project has its own terminal history
-      const safeProjectName = String(data.projectName || sessionId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeProjectName = String(data.projectName || sid).replace(/[^a-zA-Z0-9_-]/g, '_');
       const histFilePath = `/tmp/.ash_history_${safeProjectName}`;
       const profileContent = [
         '# DevFlux environment profile — auto-generated',
@@ -822,36 +804,36 @@ rn_bridge.channel.on('message', async (msg) => {
       spawnArgs.push('-w', targetDir);
       // Use login shell (-l) so /etc/profile and /etc/profile.d/* are sourced automatically
       // We pass ENV=/etc/profile.d/devflux.sh to guarantee it runs on subshells too.
-      spawnArgs.push('/usr/bin/env', 'TERM=xterm-256color', 'COLUMNS=' + shellCols, 'LINES=' + shellRows, 'ENV=/etc/profile.d/devflux.sh', 'PS1=' + promptString, '/bin/sh', '-l', '-i');
+      const ttyFile = '/tmp/devflux-tty-' + require('crypto').randomBytes(12).toString('hex');
+      ptyTerminals[sid] = { ttyFile: path.join(res.path, ttyFile.slice(1)) };
+      spawnArgs.push('/usr/bin/env', 'TERM=xterm-256color', 'SHELL=/bin/sh', 'ENV=/etc/profile.d/devflux.sh', 'PS1=' + promptString, '/usr/bin/script',
+        ...scriptArguments({ cols: shellCols, rows: shellRows, ttyFile }));
 
       ptyProcesses[sid] = spawn(spawnCmd, spawnArgs, {
         env: {
-          ...process.env,
-          TERM: 'xterm-256color',
+          // script runs stty/tty before the login profile; never inherit Android's PATH here.
+          ...getProotEnv(appLibDir),
           COLUMNS: String(shellCols),
           LINES: String(shellRows),
           PS1: promptString,
           ENV: '/etc/profile.d/devflux.sh',
-          LD_LIBRARY_PATH: __dirname,
-          PROOT_NO_SECCOMP: '1',
-          PROOT_TMP_DIR: path.join(__dirname, 'tmp'),
-          PROOT_LOADER: path.join(appLibDir, 'libproot-loader.so'),
-          PROOT_LOADER_32: path.join(appLibDir, 'libproot-loader32.so'),
           CHOKIDAR_USEPOLLING: '1',
           WATCHPACK_POLLING: 'true'
         }
       });
-      currentInputLines[sid] = "";
+      const startedProcess = ptyProcesses[sid];
+      startedProcess.stdout.setEncoding('utf8');
+      startedProcess.stderr.setEncoding('utf8');
+      startedProcess.stdin.on('error', error => {
+        rn_bridge.channel.send(JSON.stringify({ type: 'SHELL_PTY_ERROR', sessionId: sid, error: error.message }));
+      });
 
       ptyProcesses[sid].stdout.on('data', d => {
-        const outStr = d.toString().replace(/(?<!\r)\n/g, '\r\n');
-        sendPtyOutput(sid, outStr);
+        sendPtyOutput(sid, d);
       });
 
       ptyProcesses[sid].stderr.on('data', d => {
         let str = d.toString();
-        // Remove job control warning
-        str = str.replace(/.*can't access tty; job control turned off\r?\n?/g, "");
 
         // Clean up "not found" errors from ash
         str = str.replace(/^\/bin\/sh: (.*?): not found/gm, "$1: command not found");
@@ -868,13 +850,15 @@ rn_bridge.channel.on('message', async (msg) => {
       ptyProcesses[sid].on('error', err => {
         console.error("[DevFlux] PTY error:", err.message);
         sendPtyOutput(sid, `\r\n[PTY Error: ${err.message}]\r\n`);
-        delete ptyProcesses[sid];
-        delete currentInputLines[sid];
+        if (ptyProcesses[sid] === startedProcess) delete ptyProcesses[sid];
       });
 
       ptyProcesses[sid].on('close', code => {
-         delete ptyProcesses[sid];
-         delete currentInputLines[sid];
+         if (ptyProcesses[sid] === startedProcess) {
+           delete ptyProcesses[sid];
+           delete ptyTerminals[sid];
+         }
+         fs.unlink(path.join(res.path, ttyFile.slice(1)), () => {});
          if (ptySilentStops[sid]) {
            delete ptySilentStops[sid];
            return;
@@ -885,38 +869,22 @@ rn_bridge.channel.on('message', async (msg) => {
     else if (data.type === 'SHELL_PTY_DATA') {
       const sid = data.sessionId || 'default';
       const ptyProcess = ptyProcesses[sid];
-      if (ptyProcess && ptyProcess.stdin) {
-         let input = data.payload;
-         if (input === '\r') {
-             currentInputLines[sid] = "";
-             ptyProcess.stdin.write('\n');
-             sendPtyOutput(sid, '\r\n');
-         } else if (/^[\x7F\b]+$/.test(input)) {
-             if (!currentInputLines[sid]) currentInputLines[sid] = '';
-             for (let i = 0; i < input.length; i++) {
-                 if (currentInputLines[sid].length > 0) {
-                     currentInputLines[sid] = currentInputLines[sid].slice(0, -1);
-                     ptyProcess.stdin.write('\x7F');
-                     sendPtyOutput(sid, '\b \b');
-                 }
-             }
-         } else if (input === '\x03') {
-             currentInputLines[sid] = "";
-             ptyProcess.stdin.write('\x03');
-             sendPtyOutput(sid, '^C\r\n');
-         } else {
-             if (!currentInputLines[sid]) currentInputLines[sid] = "";
-             const normalizedInput = sanitizePtyInput(sid, input);
-             if (!normalizedInput) return;
-             updateCurrentInputLine(sid, normalizedInput);
-             ptyProcess.stdin.write(normalizedInput);
-             sendPtyOutput(sid, normalizedInput);
-         }
+      if (!writePtyInput(ptyProcess, data.payload)) {
+        rn_bridge.channel.send(JSON.stringify({ type: 'SHELL_PTY_ERROR', sessionId: sid, error: 'Sessao de terminal indisponivel.' }));
       }
     }
     else if (data.type === 'SHELL_PTY_RESIZE') {
       const sid = data.sessionId || 'default';
-      console.log(`[DevFlux] Resize session ${sid}: ${data.cols}x${data.rows}`);
+      const terminal = ptyTerminals[sid];
+      if (!terminal || !fs.existsSync(terminal.ttyFile)) return;
+      const tty = fs.readFileSync(terminal.ttyFile, 'utf8').trim();
+      if (!/^\/dev\/pts\/\d+$/.test(tty)) return;
+      const size = terminalSize(data.cols, data.rows);
+      runLinuxCommand('stty -F ' + shellQuote(tty) + ' cols ' + size.cols + ' rows ' + size.rows)
+        .then(result => {
+          if (result.code !== 0) throw new Error(result.stderr);
+        })
+        .catch(error => rn_bridge.channel.send(JSON.stringify({ type: 'SHELL_PTY_ERROR', sessionId: sid, error: 'Resize: ' + error.message })));
     }
     else if (data.type === 'SHELL_PTY_RESET') {
       const sid = data.sessionId || 'default';

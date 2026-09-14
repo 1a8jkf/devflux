@@ -19,14 +19,15 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.marcos.devflux",
-      "versionCode": 1
+      "versionCode": 4
     },
     "web": {
       "output": "static",
       "favicon": "./assets/AppIcons/devflux-app-icon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "./plugins/withDevFluxAndroid"
     ],
     "experiments": {
       "typedRoutes": true,

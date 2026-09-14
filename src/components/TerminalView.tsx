@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, StyleSheet, Text, DeviceEventEmitter, Keyboard, Platform, AppState, AppStateStatus, NativeModules } from 'react-native';
+import { View, StyleSheet, Text, DeviceEventEmitter, Platform, AppState } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { NodeRunner } from '../utils/nodeRunner';
 import { PROJECTS_ROOT } from '../services/FileSystemService';
@@ -7,20 +7,27 @@ import { LiveSyncService } from '../services/LiveSyncService';
 import { DebugService } from '../services/DebugService';
 import { xtermCSS, xtermJS, fitAddonJS } from './xtermBundle';
 import { useLanguage } from '../contexts/LanguageContext';
+import { EDITOR_WEB_BRIDGE } from './editorWebBridge';
+import { terminalKeySequence } from '../utils/terminalKeys';
+import * as Clipboard from 'expo-clipboard';
+import { TERMINAL_WEB_INPUT } from './terminalWebInput';
+import { useIsFocused } from 'expo-router/react-navigation';
 
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html>
   <head>
+    <script>${EDITOR_WEB_BRIDGE}</script>
+    <script>${TERMINAL_WEB_INPUT}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <style>${xtermCSS}</style>
     <script>${xtermJS}</script>
     <script>${fitAddonJS}</script>
     <style>
       body, html { margin: 0; padding: 0; height: 100%; width: 100%; background-color: #000; overflow: hidden; }
-      #terminal-container { height: 100%; width: 100%; padding: 10px 10px 76px; box-sizing: border-box; }
+      #terminal-viewport { height: 100%; width: 100%; padding: 12px 12px min(112px, 22vh); box-sizing: border-box; }
+      #terminal-container { height: 100%; width: 100%; }
       .xterm { letter-spacing: 0; height: 100%; }
-      .xterm-rows { line-height: 1.28 !important; }
       .xterm-viewport { overflow-y: scroll !important; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
       .xterm-screen { transform: translateZ(0); }
       #error-log { color: red; background: white; font-family: monospace; position: absolute; top: 0; left: 0; z-index: 9999; pointer-events: none; }
@@ -28,9 +35,31 @@ const HTML_CONTENT = `
   </head>
   <body>
     <div id="error-log"></div>
-    <div id="terminal-container"></div>
+    <div id="terminal-viewport"><div id="terminal-container"></div></div>
     <script>
       let term;
+      let toolbarKeyRunning = false;
+      window.runTerminalKey = function(meta) {
+        window.devfluxSetModifiers({});
+        if (!term) return;
+        if (window.terminalClipboardKey(meta)) return;
+        window.commitTerminalComposition();
+        toolbarKeyRunning = true;
+        try {
+          term.focus();
+          const cursorKeys = { ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35 };
+          if (cursorKeys[meta.key]) {
+            // Use xterm to translate cursor keys after the IME commit above.
+            const options = Object.assign({}, meta, { bubbles: true, cancelable: true, code: meta.key, keyCode: cursorKeys[meta.key], which: cursorKeys[meta.key] });
+            term.textarea.dispatchEvent(new KeyboardEvent('keydown', options));
+            term.textarea.dispatchEvent(new KeyboardEvent('keyup', options));
+            sendMessage({ type: 'KEY_COMPLETE', requestId: meta.requestId });
+          } else {
+            sendMessage({ type: 'VIRTUAL_KEY', meta: Object.assign({}, meta, { applicationCursorKeys: term.modes.applicationCursorKeysMode }) });
+          }
+        } finally { toolbarKeyRunning = false; }
+      };
+      window.devfluxInstallModifiers(window.runTerminalKey);
 
       window.onerror = function(message, source, lineno, colno, error) {
          document.getElementById('error-log').innerText += "\\n" + message;
@@ -53,8 +82,8 @@ const HTML_CONTENT = `
          term = new Terminal({
            theme: { background: '#000000', foreground: '#F4F4F5', cursor: '#7DD3FC' },
            fontFamily: '"Cascadia Mono", "JetBrains Mono", "SFMono-Regular", monospace',
-           fontSize: 12,
-           lineHeight: 1.28,
+           fontSize: 13,
+           lineHeight: 1.4,
            letterSpacing: 0,
            cursorBlink: true,
            cursorStyle: 'block',
@@ -71,15 +100,19 @@ const HTML_CONTENT = `
          window.term = term;
          term.loadAddon(fitAddon);
          term.open(document.getElementById('terminal-container'));
+         window.installTerminalInput(term, sendMessage);
+         term.textarea.addEventListener('focus', () => {
+           if (!toolbarKeyRunning) sendMessage({ type: 'FOCUS' });
+         });
 
          term.onResize(size => {
            sendMessage({ type: 'RESIZE', cols: size.cols, rows: size.rows });
          });
 
-         setTimeout(() => {
-           fitAddon.fit();
-           sendMessage({ type: 'READY', cols: term.cols, rows: term.rows });
-         }, 150);
+         fitAddon.fit();
+         sendMessage({ type: 'READY', cols: term.cols, rows: term.rows });
+         const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+         resizeObserver.observe(document.getElementById('terminal-container'));
 
          window.addEventListener('resize', () => {
            if (window.fitAddon) { window.fitAddon.fit(); }
@@ -93,7 +126,7 @@ const HTML_CONTENT = `
                ta.setAttribute('autocorrect', 'off');
                ta.setAttribute('autocapitalize', 'none');
                ta.setAttribute('spellcheck', 'false');
-               ta.setAttribute('autocomplete', 'off');
+               ta.setAttribute('autocomplete', 'new-password');
                ta.setAttribute('autofill', 'off');
                ta.setAttribute('enterkeyhint', 'enter');
                ta.setAttribute('aria-autocomplete', 'none');
@@ -103,7 +136,6 @@ const HTML_CONTENT = `
                ta.setAttribute('data-enable-grammarly', 'false');
                ta.setAttribute('data-lpignore', 'true');
                ta.setAttribute('data-form-type', 'other');
-               ta.style.imeMode = 'disabled';
              }
            });
          };
@@ -125,7 +157,7 @@ const HTML_CONTENT = `
           ta.setAttribute('autocorrect', 'off');
           ta.setAttribute('autocapitalize', 'none');
           ta.setAttribute('spellcheck', 'false');
-          ta.setAttribute('autocomplete', 'off');
+          ta.setAttribute('autocomplete', 'new-password');
           ta.setAttribute('autofill', 'off');
           ta.setAttribute('enterkeyhint', 'enter');
           ta.setAttribute('aria-autocomplete', 'none');
@@ -148,6 +180,7 @@ const HTML_CONTENT = `
       window.addEventListener('blur', () => { sendMessage({ type: 'BLUR' }); window._terminalExplicitlyFocused = false; }, true);
       // Only send FOCUS when user explicitly touches the terminal container
       document.addEventListener('touchstart', (event) => {
+        if (!event.target.closest('#terminal-container')) { terminalTouchStart = null; return; }
         const touch = event.touches && event.touches[0];
         terminalTouchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
         terminalTouchMoved = false;
@@ -162,10 +195,11 @@ const HTML_CONTENT = `
         }
       }, { passive: true, capture: true });
       document.addEventListener('touchend', () => {
-        if (!terminalTouchMoved && window._terminalExplicitlyFocused) {
+        if (terminalTouchStart && !terminalTouchMoved && !window._terminalLongPress && !(term && term.hasSelection()) && window._terminalExplicitlyFocused) {
           focusTerminalTextarea();
           sendMessage({ type: 'FOCUS' });
         }
+        window._terminalLongPress = false;
         terminalTouchStart = null;
       }, { passive: true, capture: true });
       // REMOVED: visualViewport resize listener — it was causing false FOCUS when
@@ -174,7 +208,9 @@ const HTML_CONTENT = `
       window.addEventListener('message', event => {
          try {
             const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-            if (msg.type === 'WRITE' && term) {
+            if (msg.type === 'clipboardResult') {
+               window.devfluxClipboardResult(msg);
+            } else if (msg.type === 'WRITE' && term) {
                term.write(msg.payload);
             } else if (msg.type === 'CLEAR' && term) {
                term.clear();
@@ -200,7 +236,12 @@ export interface TerminalViewRef {
   resetTerminal: () => void;
 }
 
-export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>(({ projectId, sessionId = 'global-1', resetKey = 0 }, ref) => {
+export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>(({ projectId, sessionId: sessionName = 'global-1', resetKey = 0 }, ref) => {
+  const sessionId = `${projectId || 'global'}:${sessionName}`;
+  const inputTarget = 'shell:' + sessionId;
+  const isScreenFocused = useIsFocused();
+  const screenFocusedRef = useRef(isScreenFocused);
+  screenFocusedRef.current = isScreenFocused;
   const webviewRef = useRef<WebView>(null);
   const isReadyRef = useRef(false);
   const isShellReadyRef = useRef(false);
@@ -208,7 +249,7 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
   const lastSizeRef = useRef({ cols: 80, rows: 24 });
   const [errorMsg, setErrorMsg] = useState('');
   const { t } = useLanguage();
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [toolbarHeight, setToolbarHeight] = useState(0);
   const remoteShellId = `remote-${sessionId}`;
   const isLiveSyncProject = !!projectId && (
     projectId === 'live-sync-workspace' ||
@@ -228,82 +269,25 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
   const sendTerminalData = (payload: string) => {
     if (isLiveSyncProject) {
       LiveSyncService.sendRemoteShellInput(remoteShellId, payload);
+      return LiveSyncService.isConnected();
     } else {
       const sent = NodeRunner.send({ type: 'SHELL_PTY_DATA', payload, sessionId });
       if (!sent) {
         DebugService.log('shell', 'error', 'Falha ao enviar entrada para o shell local.', { project: projectId, sessionId, bytes: payload.length });
       }
+      return sent;
     }
   };
 
   useEffect(() => {
-    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
-      setKeyboardHeight(e.endCoordinates.height);
-      // Tell xterm to resize after keyboard opens
-      setTimeout(() => {
-        webviewRef.current?.injectJavaScript(`
-          if (window.term && window.fitAddon) {
-            window.fitAddon.fit();
-            window.term.scrollToBottom();
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'RESIZE', cols: window.term.cols, rows: window.term.rows }));
-          }
-          true;
-        `);
-      }, 100);
+    const toolbar = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_HEIGHT_CHANGE', (height: number) => {
+      setToolbarHeight((global as any).activeInputTarget === inputTarget ? Math.max(0, height) : 0);
     });
-    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
-      setKeyboardHeight(0);
-      setTimeout(() => {
-        webviewRef.current?.injectJavaScript(`
-          if (window.term && window.fitAddon) {
-            window.fitAddon.fit();
-            window.term.scrollToBottom();
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'RESIZE', cols: window.term.cols, rows: window.term.rows }));
-          }
-          true;
-        `);
-      }, 100);
+    const appState = AppState.addEventListener('change', state => {
+      if (state === 'active') webviewRef.current?.injectJavaScript('window.fitAddon && window.fitAddon.fit(); true;');
     });
-
-    // Background resume logic
-    const appStateSub = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        // Trigger resize to force refresh Xterm canvas if it died
-        webviewRef.current?.injectJavaScript(`
-          if (window.term && window.fitAddon) {
-            window.fitAddon.fit();
-          }
-          true;
-        `);
-        // We can also poll nodejs backend to ensure session is alive
-      }
-    });
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-      appStateSub.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      if (Platform.OS === 'android' && NativeModules.DevFluxForeground) {
-         NativeModules.DevFluxForeground.startService();
-      }
-    } catch (e) {
-      console.warn('Failed to start DevFluxForeground service:', e);
-    }
-    return () => {
-       try {
-         if (Platform.OS === 'android' && NativeModules.DevFluxForeground) {
-            NativeModules.DevFluxForeground.stopService();
-         }
-       } catch (e) {
-         console.warn('Failed to stop DevFluxForeground service:', e);
-       }
-    };
-  }, []);
+    return () => { toolbar.remove(); appState.remove(); };
+  }, [inputTarget]);
 
   const startPtySession = (cols = 80, rows = 24) => {
     if (!isReadyRef.current) return;
@@ -374,8 +358,6 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
   }));
 
   useEffect(() => {
-    (global as any).activeInputTarget = sessionId;
-    DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
     const previousRemoteOutput = LiveSyncService.onRemoteShellOutput;
     const previousRemoteExit = LiveSyncService.onRemoteShellExit;
     const handleRemoteShellOutput = (shellId: string, output: string) => {
@@ -428,44 +410,14 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
     const toolbarSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION', (action) => {
       const currentTarget = (global as any).activeInputTarget;
       const actionTarget = action?.target;
-      if (actionTarget && actionTarget !== sessionId) return;
-      if (!actionTarget && currentTarget !== sessionId) return;
+      if (actionTarget !== inputTarget) return;
+      if (action.actionType === 'modifier') {
+        webviewRef.current?.injectJavaScript(`window.devfluxSetModifiers(${JSON.stringify(action.meta)}); true;`);
+        return;
+      }
+      if (currentTarget !== inputTarget) return;
       if (action.actionType === 'keypress') {
-        const { key, ctrlKey } = action.meta;
-        let charToSend = '';
-        if (ctrlKey) {
-          if (key.length === 1 && key >= 'a' && key <= 'z') {
-            charToSend = String.fromCharCode(key.charCodeAt(0) - 96);
-          } else if (key.length === 1 && key >= 'A' && key <= 'Z') {
-            charToSend = String.fromCharCode(key.charCodeAt(0) - 64);
-          }
-        } else if (key === 'Tab') {
-          charToSend = '\t';
-        } else if (key === 'Enter') {
-          charToSend = '\r';
-        } else if (key === 'Escape') {
-          charToSend = '\x1b';
-        } else if (key === 'ArrowUp') {
-          charToSend = '\x1b[A';
-        } else if (key === 'ArrowDown') {
-          charToSend = '\x1b[B';
-        } else if (key === 'ArrowRight') {
-          charToSend = '\x1b[C';
-        } else if (key === 'ArrowLeft') {
-          charToSend = '\x1b[D';
-        } else if (key.length === 1) {
-          charToSend = key;
-        }
-        if (charToSend) {
-          webviewRef.current?.injectJavaScript(`
-            if (window.term) { window.term.focus(); }
-            var ta = document.querySelector('.xterm-helper-textarea') || document.querySelector('textarea');
-            if (ta) { ta.focus(); }
-            true;
-          `);
-          sendTerminalData(charToSend);
-          DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId: action.requestId, target: sessionId });
-        }
+        webviewRef.current?.injectJavaScript(`window.runTerminalKey(${JSON.stringify({ ...action.meta, requestId: action.requestId })}); true;`);
       }
     });
 
@@ -481,49 +433,67 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
       if (isLiveSyncProject) {
         LiveSyncService.stopRemoteShell(remoteShellId);
       }
-      DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+      if ((global as any).activeInputTarget === inputTarget) {
+        (global as any).activeInputTarget = null;
+        DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+      }
     };
-  }, [sessionId, remoteShellId, isLiveSyncProject, projectId]);
+  }, [sessionId, remoteShellId, isLiveSyncProject, projectId, inputTarget]);
 
-  const onMessage = (event: any) => {
+  const onMessage = async (event: any) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
-      if (msg.type === 'READY') {
+      if (msg.type === 'clipboard') {
+        if (!isScreenFocused || (global as any).activeInputTarget !== inputTarget) return;
+        let reply: { type: string; requestId: string; text?: string; error?: string } = { type: 'clipboardResult', requestId: msg.requestId };
+        try {
+          if (msg.operation === 'paste') reply.text = await Clipboard.getStringAsync();
+          else await Clipboard.setStringAsync(msg.text || '');
+        } catch (error) { reply.error = String(error); }
+        if (screenFocusedRef.current && (global as any).activeInputTarget === inputTarget) {
+          webviewRef.current?.injectJavaScript(`window.postMessage(${JSON.stringify(reply)}, '*'); true;`);
+        }
+      } else if (msg.type === 'READY') {
         isReadyRef.current = true;
         const c = msg.cols || 80;
         const r = msg.rows || 24;
         lastSizeRef.current = { cols: c, rows: r };
-        (global as any).activeInputTarget = sessionId;
-        DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
         startPtySession(c, r);
         // Commands are now handled in PTY_DATA when prompt appears
       } else if (msg.type === 'RESIZE') {
         lastSizeRef.current = { cols: msg.cols, rows: msg.rows };
-        (global as any).activeInputTarget = sessionId;
-        DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId });
         if (isLiveSyncProject) {
           LiveSyncService.resizeRemoteShell(remoteShellId, msg.cols, msg.rows);
         } else {
           NodeRunner.send({ type: 'SHELL_PTY_RESIZE', cols: msg.cols, rows: msg.rows, sessionId: sessionId });
         }
-      } else if (msg.type === 'DATA') {
-        // Only route terminal data if the terminal is the active target (avoid stealing from Ace)
-        if ((global as any).activeInputTarget === sessionId || !(global as any).activeInputTarget || String((global as any).activeInputTarget).startsWith('terminal') || String((global as any).activeInputTarget) === sessionId) {
-          (global as any).activeInputTarget = sessionId;
-          DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId, keyboardExpected: true });
-          if (webviewRef.current && typeof (webviewRef.current as any).requestFocus === 'function') { (webviewRef.current as any).requestFocus(); }
+      } else if (msg.type === 'DATA' || msg.type === 'VIRTUAL_KEY') {
+        if ((global as any).activeInputTarget !== inputTarget) return;
+        const payload = msg.type === 'VIRTUAL_KEY' ? terminalKeySequence(msg.meta) : msg.payload;
+        const requestId = msg.type === 'VIRTUAL_KEY' ? msg.meta.requestId : msg.requestId;
+        if (payload) {
+          sendTerminalData(payload);
         }
-        sendTerminalData(msg.payload);
+        if (requestId) {
+          DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId, target: inputTarget });
+        }
+      } else if (msg.type === 'KEY_COMPLETE' || msg.type === 'actionComplete') {
+        if ((global as any).activeInputTarget === inputTarget && msg.requestId) {
+          DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId: msg.requestId, target: inputTarget });
+        }
+      } else if (msg.type === 'modifiersConsumed') {
+        if ((global as any).activeInputTarget === inputTarget) DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_MODIFIERS_CONSUMED', { target: inputTarget });
       } else if (msg.type === 'FOCUS') {
+        if (!isScreenFocused) return;
         // FOCUS comes from user explicitly touching the terminal (we set _terminalExplicitlyFocused in JS)
         // This is a genuine terminal focus — claim activeInputTarget
-        (global as any).activeInputTarget = sessionId;
-        DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: sessionId, keyboardExpected: true });
+        (global as any).activeInputTarget = inputTarget;
+        DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: inputTarget, keyboardExpected: true });
         if (webviewRef.current && typeof (webviewRef.current as any).requestFocus === 'function') { (webviewRef.current as any).requestFocus(); }
       } else if (msg.type === 'BLUR') {
-        DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
-      } else if (msg.type === 'JS_ERROR') {
-        setErrorMsg(msg.payload);
+        // Tapping the native toolbar can blur the WebView; retain ownership until another input is focused.
+      } else if (msg.type === 'JS_ERROR' || msg.type === 'error') {
+        setErrorMsg(msg.payload || msg.message);
         console.error("Terminal Webview JS Error:", msg.payload);
         DebugService.log('shell', 'error', 'Erro JavaScript no terminal WebView.', { project: projectId, sessionId, error: msg.payload });
       }
@@ -534,9 +504,9 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
 
   return (
     <View
-      style={[styles.container, { paddingBottom: Platform.OS === 'ios' ? keyboardHeight : 0 }]}
+      style={[styles.container, { paddingBottom: toolbarHeight > 0 ? toolbarHeight + 8 : 0 }]}
       onTouchStart={() => {
-        (global as any).activeInputTarget = sessionId;
+        if (isScreenFocused) (global as any).activeInputTarget = inputTarget;
       }}
       onLayout={() => {
         webviewRef.current?.injectJavaScript(`
@@ -548,6 +518,7 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
         `);
       }}
     >
+
       {errorMsg && (
         <View style={styles.errorContainer}>
            <Text style={styles.errorText}>{t('WebView Error:')} {errorMsg}</Text>
@@ -558,7 +529,7 @@ export const TerminalView = React.forwardRef<TerminalViewRef, TerminalViewProps>
         originWhitelist={['*']}
         source={{ html: HTML_CONTENT }}
         onMessage={onMessage}
-        style={{ flex: 1, backgroundColor: '#000000', width: '100%', height: '100%' }}
+        style={{ flex: 1, backgroundColor: '#000000', width: '100%' }}
         scrollEnabled={true}
         bounces={false}
         javaScriptEnabled={true}

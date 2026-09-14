@@ -22,11 +22,12 @@ interface KeyboardToolbarProps {
   onAction?: (action: string, meta?: { key?: string, ctrlKey?: boolean, shiftKey?: boolean, altKey?: boolean, target?: ToolbarTarget }) => void;
 }
 
-const isToolbarTarget = (target?: string | null) => !!target && (target === 'editor' || String(target).startsWith('shell'));
+const isToolbarTarget = (target?: string | null) => !!target && (target === 'editor' || String(target).startsWith('shell:'));
 
 export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const measuredHeightRef = useRef(0);
   const [ctrlPressed, setCtrlPressed] = useState(false);
   const [shiftPressed, setShiftPressed] = useState(false);
   const [altPressed, setAltPressed] = useState(false);
@@ -35,6 +36,9 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [activeTarget, setActiveTarget] = useState<ToolbarTarget | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const [pendingLabel, setPendingLabel] = useState('');
+  const pendingRequestRef = useRef<string | null>(null);
+  const modifiersRef = useRef({ ctrlKey: false, shiftKey: false, altKey: false });
 
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -44,7 +48,6 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
   const activeTargetRef = useRef<ToolbarTarget | null>(null);
   const keyboardVisibleRef = useRef(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const clearFallbackTimer = () => {
@@ -55,15 +58,17 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
     };
 
     const clearPendingTimer = () => {
-      if (pendingClearTimerRef.current) {
-        clearTimeout(pendingClearTimerRef.current);
-        pendingClearTimerRef.current = null;
-      }
+      pendingRequestRef.current = null;
     };
 
     const hideToolbar = () => {
       clearFallbackTimer();
       clearPendingTimer();
+      if (activeTargetRef.current) DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION', {
+        actionType: 'modifier', target: activeTargetRef.current,
+        meta: { ctrlKey: false, shiftKey: false, altKey: false },
+      });
+      modifiersRef.current = { ctrlKey: false, shiftKey: false, altKey: false };
       activeTargetRef.current = null;
       setActiveTarget(null);
       setIsVisible(false);
@@ -113,6 +118,7 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
         return;
       }
 
+      if (activeTargetRef.current !== nextTarget) hideToolbar();
       activeTargetRef.current = nextTarget;
       setActiveTarget(nextTarget);
       if (keyboardVisibleRef.current) {
@@ -142,10 +148,17 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
     const hideToolbarSub = DeviceEventEmitter.addListener('HIDE_KEYBOARD_TOOLBAR', hideToolbar);
     const completeSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION_COMPLETE', (event?: { requestId?: string, target?: ToolbarTarget }) => {
       if (event?.target && event.target !== activeTargetRef.current) return;
-      if (!event?.requestId || event.requestId === pendingActionId) {
+      if (event?.requestId && event.requestId === pendingRequestRef.current) {
         clearPendingTimer();
         setPendingActionId(null);
       }
+    });
+    const modifiersSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_MODIFIERS_CONSUMED', (event) => {
+      if (event?.target !== activeTargetRef.current) return;
+      modifiersRef.current = { ctrlKey: false, shiftKey: false, altKey: false };
+      setCtrlPressed(false);
+      setShiftPressed(false);
+      setAltPressed(false);
     });
 
     return () => {
@@ -156,45 +169,53 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
       showToolbarSub.remove();
       hideToolbarSub.remove();
       completeSub.remove();
+      modifiersSub.remove();
       DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_HEIGHT_CHANGE', 0);
     };
-  }, [insets.bottom, pendingActionId]);
+  }, [insets.bottom]);
+
+  useEffect(() => {
+    DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_HEIGHT_CHANGE', isVisible && activeTarget && isKeyboardVisible ? measuredHeightRef.current : 0);
+  }, [isVisible, activeTarget, isKeyboardVisible]);
 
   if (!isVisible || !activeTarget || !isKeyboardVisible) return null;
-
-  const queuePendingClear = (requestId: string) => {
-    if (pendingClearTimerRef.current) clearTimeout(pendingClearTimerRef.current);
-    pendingClearTimerRef.current = setTimeout(() => {
-      setPendingActionId(current => current === requestId ? null : current);
-      pendingClearTimerRef.current = null;
-    }, 350);
-  };
 
   const markInteracting = () => {
     isInteractingRef.current = true;
     setTimeout(() => { isInteractingRef.current = false; }, 1000);
   };
 
-  const handleKeyPress = (key: string) => {
+  const handleKeyPress = (key: string, forceCtrl = false) => {
     markInteracting();
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const target = activeTargetRef.current || activeTarget;
-    const meta = { key, ctrlKey: ctrlPressed, shiftKey: shiftPressed, altKey: altPressed, target };
+    if ((global as any).activeInputTarget !== target) return;
+    const meta = { key, ...modifiersRef.current, ctrlKey: forceCtrl || modifiersRef.current.ctrlKey, target, requestId };
+    setPendingLabel([meta.ctrlKey && 'Ctrl', meta.altKey && 'Alt', meta.shiftKey && 'Shift', key].filter(Boolean).join('+'));
+    pendingRequestRef.current = requestId;
     setPendingActionId(key);
     onAction?.('keypress', meta);
     DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION', { actionType: 'keypress', meta, target, requestId });
+    modifiersRef.current = { ctrlKey: false, shiftKey: false, altKey: false };
     setCtrlPressed(false);
     setShiftPressed(false);
     setAltPressed(false);
     if (key === 'Escape') setPendingActionId(null);
-    else queuePendingClear(requestId);
   };
 
   const handleModifier = (mod: 'ctrl' | 'shift' | 'alt') => {
     markInteracting();
-    if (mod === 'ctrl') setCtrlPressed(!ctrlPressed);
-    if (mod === 'shift') setShiftPressed(!shiftPressed);
-    if (mod === 'alt') setAltPressed(!altPressed);
+    const target = activeTargetRef.current;
+    if (!target || (global as any).activeInputTarget !== target) return;
+    const flag = mod === 'ctrl' ? 'ctrlKey' : mod === 'shift' ? 'shiftKey' : 'altKey';
+    const next = { ...modifiersRef.current, [flag]: !modifiersRef.current[flag] };
+    modifiersRef.current = next;
+    pendingRequestRef.current = null;
+    setPendingActionId(null);
+    setCtrlPressed(next.ctrlKey);
+    setShiftPressed(next.shiftKey);
+    setAltPressed(next.altKey);
+    DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION', { actionType: 'modifier', meta: next, target });
   };
 
   const isPending = (key: string) => pendingActionId === key;
@@ -208,13 +229,16 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
       ]}
       onPress={action}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: isActive }}
     >
       <Text style={[styles.keyText, isActive && styles.keyTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 
   const renderIconKey = (iconName: string, key: string, label?: string) => (
-    <TouchableOpacity style={[styles.keyButton, isPending(key) && styles.keyButtonActive]} onPress={() => handleKeyPress(key)} activeOpacity={0.7}>
+    <TouchableOpacity style={[styles.keyButton, isPending(key) && styles.keyButtonActive]} onPress={() => handleKeyPress(key)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={label || key} accessibilityState={{ selected: isPending(key), busy: isPending(key) }}>
       <Icon name={iconName} size={16} color={isPending(key) ? '#FFFFFF' : '#E2E8F0'} />
       {label && <Text style={[styles.keyText, isPending(key) && styles.keyTextActive, { marginLeft: 4 }]}>{label}</Text>}
     </TouchableOpacity>
@@ -245,6 +269,7 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
   return (
     <View
       onLayout={(e) => {
+        measuredHeightRef.current = e.nativeEvent.layout.height;
         DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_HEIGHT_CHANGE', e.nativeEvent.layout.height);
       }}
       style={[styles.container, { bottom: bottomOffset }]}
@@ -264,6 +289,25 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
         </View>
       ) : (
         <View style={styles.toolbarContent}>
+          {(ctrlPressed || (!!pendingActionId && pendingLabel.startsWith('Ctrl+'))) && (
+            <ScrollView
+              horizontal
+              style={styles.controlKeys}
+              contentContainerStyle={styles.scrollContent}
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="always"
+            >
+              {renderKey('C', () => handleKeyPress('c', true), isPending('c'), true)}
+              {renderKey('V', () => handleKeyPress('v', true), isPending('v'), true)}
+              {renderKey('X', () => handleKeyPress('x', true), isPending('x'), true)}
+              {renderKey('Z', () => handleKeyPress('z', true), isPending('z'), true)}
+              {renderKey('Y', () => handleKeyPress('y', true), isPending('y'), true)}
+              {renderKey('S', () => handleKeyPress('s', true), isPending('s'), true)}
+              {renderKey('D', () => handleKeyPress('d', true), isPending('d'), true)}
+              {renderKey('A', () => handleKeyPress('a', true), isPending('a'), true)}
+              {renderKey('F', () => handleKeyPress('f', true), isPending('f'), true)}
+            </ScrollView>
+          )}
           <View style={styles.row}>
             <ScrollView
               horizontal
@@ -272,30 +316,17 @@ export const KeyboardToolbar: React.FC<KeyboardToolbarProps> = ({ onAction }) =>
               contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="always"
             >
-              {ctrlPressed && (
-                <>
-                  {renderKey('C', () => handleKeyPress('c'), isPending('c'), true)}
-                  {renderKey('V', () => handleKeyPress('v'), isPending('v'), true)}
-                  {renderKey('X', () => handleKeyPress('x'), isPending('x'), true)}
-                  {renderKey('Z', () => handleKeyPress('z'), isPending('z'), true)}
-                  {renderKey('Y', () => handleKeyPress('y'), isPending('y'), true)}
-                  {renderKey('S', () => handleKeyPress('s'), isPending('s'), true)}
-                  {renderKey('D', () => handleKeyPress('d'), isPending('d'), true)}
-                  {renderKey('A', () => handleKeyPress('a'), isPending('a'), true)}
-                  {renderKey('F', () => handleKeyPress('f'), isPending('f'), true)}
-                  <View style={styles.divider} />
-                </>
-              )}
-
               {renderKey('CTRL', () => handleModifier('ctrl'), ctrlPressed)}
               {renderKey('TAB', () => handleKeyPress('Tab'), isPending('Tab'))}
               {renderKey('ENTER', () => handleKeyPress('Enter'), isPending('Enter'), true)}
               {renderKey('SHFT', () => handleModifier('shift'), shiftPressed)}
               {renderKey('ALT', () => handleModifier('alt'), altPressed)}
 
-              {renderIconKey('Undo', 'Undo')}
-              {renderIconKey('Redo', 'Redo')}
-              {renderIconKey('Search', 'Search')}
+              {activeTarget === 'editor' && <>
+                {renderIconKey('Undo', 'Undo')}
+                {renderIconKey('Redo', 'Redo')}
+                {renderIconKey('Search', 'Search')}
+              </>}
 
               {renderKey('ESC', () => handleKeyPress('Escape'), isPending('Escape'))}
 
@@ -344,6 +375,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     height: 44,
+  },
+  controlKeys: {
+    height: 40,
+    flexGrow: 0,
   },
   scrollView: {
     flex: 1,

@@ -1,0 +1,115 @@
+import java.security.KeyStore
+import groovy.json.JsonSlurper
+
+tasks.matching { it.name == 'createBundleReleaseJsAndAssets' }.configureEach {
+    sources.exclude('dist/native-node/**')
+}
+
+rootProject.subprojects { subproject ->
+    if (subproject.name == 'nodejs-mobile-react-native') {
+        subproject.plugins.withId('com.android.library') {
+            subproject.android.defaultConfig.externalNativeBuild.cmake.arguments.add('-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON')
+        }
+    }
+}
+
+// Applied by the Expo plugin after the generated app configuration.
+def readSigningValue = { String name -> System.getenv(name) ?: project.findProperty(name)?.toString() }
+def signingValues = ['STORE_FILE', 'STORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD'].collectEntries {
+    [(it): readSigningValue('DEVFLUX_UPLOAD_' + it)]
+}
+// An explicit environment/Gradle configuration takes precedence as a whole, never mixing keys.
+if (!signingValues.values().any { it } && (android.buildTypes.release.signingConfig == null || android.buildTypes.release.signingConfig.name == 'debug')) {
+    def privateDirectory = System.getenv('DEVFLUX_SIGNING_DIR') ?: new File(System.getProperty('user.home'), '.config/devflux/signing/com.marcos.devflux').absolutePath
+    def credentialsFile = new File(privateDirectory, 'credentials.json')
+    if (credentialsFile.isFile()) {
+        def credentials = new JsonSlurper().parse(credentialsFile)
+        signingValues = signingValues.collectEntries { suffix, ignored ->
+            [(suffix): credentials['DEVFLUX_UPLOAD_' + suffix]?.toString()]
+        }
+    }
+}
+def suppliedSigning = signingValues.values().any { it }
+def completeSigning = signingValues.values().every { it }
+def unsignedAudit = project.findProperty('devfluxUnsignedAudit') == 'true'
+
+android {
+    defaultConfig {
+        // Existing native projects must use the same version as Expo, without a destructive prebuild.
+        def expoConfig = new JsonSlurper().parse(new File(rootProject.projectDir, '../app.json')).expo
+        versionCode expoConfig.android.versionCode as int
+        versionName expoConfig.version
+        // PRoot and the Alpine rootfs shipped with this app only support ARM64.
+        ndk { abiFilters.clear(); abiFilters.add('arm64-v8a') }
+    }
+    if (unsignedAudit) {
+        buildTypes.release.signingConfig = null
+    } else if (completeSigning) {
+        signingConfigs {
+            release {
+                storeFile rootProject.file(signingValues.STORE_FILE)
+                storePassword signingValues.STORE_PASSWORD
+                keyAlias signingValues.KEY_ALIAS
+                keyPassword signingValues.KEY_PASSWORD
+            }
+        }
+        buildTypes.release.signingConfig = signingConfigs.release
+    } else if (buildTypes.release.signingConfig?.name == 'debug') {
+        // EAS can inject a real release configuration; never fall back to the template debug key.
+        buildTypes.release.signingConfig = null
+    }
+}
+
+def checkNativeRelease = tasks.register('verifyDevFluxReleaseNative', Exec) {
+    dependsOn 'mergeReleaseNativeLibs'
+    commandLine 'node',
+        new File(rootProject.projectDir, '../scripts/check-android-native.cjs').absolutePath,
+        '--strict',
+        layout.buildDirectory.dir('intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/arm64-v8a').get().asFile.absolutePath
+}
+if (!unsignedAudit) {
+    tasks.matching { it.name == 'packageRelease' || it.name == 'packageReleaseBundle' }.configureEach {
+        dependsOn checkNativeRelease
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def releaseRequested = graph.allTasks.any {
+        it.project == project && (it.name == 'bundleRelease' || it.name == 'assembleRelease' || it.name.startsWith('packageRelease'))
+    }
+    if (!releaseRequested) return
+    if (android.defaultConfig.targetSdkVersion.apiLevel < 36) {
+        throw new GradleException('DevFlux release requires targetSdkVersion >= 36.')
+    }
+    if (suppliedSigning && !completeSigning) {
+        throw new GradleException('Incomplete DEVFLUX_UPLOAD_* signing configuration. No debug fallback is allowed.')
+    }
+    def signing = android.buildTypes.release.signingConfig
+    if (signing == null) {
+        if (unsignedAudit) {
+            logger.warn('DEVFLUX AUDIT ONLY: unsigned artifact, NOT suitable for upload or installation.')
+            return
+        }
+        throw new GradleException('Configure DEVFLUX_UPLOAD_STORE_FILE, STORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD, or EAS release credentials. Use -PdevfluxUnsignedAudit=true only for an unsigned audit.')
+    }
+    if (signing.name == 'debug' || signing.keyAlias == 'androiddebugkey') {
+        throw new GradleException('Debug signing is forbidden for DevFlux release artifacts.')
+    }
+    if (!signing.storeFile?.isFile()) throw new GradleException('Release keystore not found.')
+    try {
+        def store = KeyStore.getInstance(signing.storeFile, signing.storePassword.toCharArray())
+        def certificate = store.getCertificate(signing.keyAlias)
+        if (certificate == null) throw new GradleException('Upload certificate alias not found.')
+        if (certificate.subjectX500Principal.name.contains('CN=Android Debug')) {
+            throw new GradleException('Android debug certificate is forbidden for release.')
+        }
+        certificate.checkValidity()
+        if (store.getKey(signing.keyAlias, signing.keyPassword.toCharArray()) == null) {
+            throw new GradleException('Upload private key not found.')
+        }
+    } catch (GradleException error) {
+        throw error
+    } catch (Exception ignored) {
+        throw new GradleException('Could not validate the upload keystore. Check its format, alias and credentials.')
+    }
+}

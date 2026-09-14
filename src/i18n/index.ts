@@ -1,13 +1,14 @@
 import { pt } from './translations/pt';
 import { en } from './translations/en';
 import { es } from './translations/es';
+import { uiMessages } from './uiMessages';
 
 export type Language = 'pt' | 'en' | 'es';
 
 export const translations = {
-  pt,
-  en,
-  es,
+  pt: { ...pt, ...uiMessages.pt },
+  en: { ...en, ...uiMessages.en },
+  es: { ...es, ...uiMessages.es },
 };
 
 export type TranslationDictionary = typeof pt;

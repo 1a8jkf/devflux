@@ -289,7 +289,7 @@ export default function SettingsScreen() {
                     { 
                       width: 'auto', 
                       paddingHorizontal: 12,
-                      backgroundColor: settings.editorEngine === eng || (eng === 'monaco' && !settings.editorEngine) 
+                      backgroundColor: settings.editorEngine === eng || (eng === 'lightweight' && !settings.editorEngine) 
                         ? theme.colors.accentBlue 
                         : theme.colors.bgSurface 
                     }
@@ -297,7 +297,7 @@ export default function SettingsScreen() {
                   onPress={() => updateSettings({ editorEngine: eng })}
                 >
                   <Text style={{
-                    color: settings.editorEngine === eng || (eng === 'monaco' && !settings.editorEngine)
+                    color: settings.editorEngine === eng || (eng === 'lightweight' && !settings.editorEngine)
                       ? '#FFF' 
                       : theme.colors.textPrimary,
                     fontFamily: theme.typography.uiBold,

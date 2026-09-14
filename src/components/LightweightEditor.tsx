@@ -1,18 +1,28 @@
-import React, { useRef, useEffect, forwardRef } from 'react';
-import { View, StyleSheet, DeviceEventEmitter } from 'react-native';
+import React, { useRef, useEffect, useState, forwardRef } from 'react';
+import { View, Text, StyleSheet, DeviceEventEmitter, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { DebugService } from '../services/DebugService';
 import { ContextManager } from '../services/ContextManager';
 import { CodeEditorProps, CodeEditorRef } from './CodeEditor';
+import { EDITOR_WEB_BRIDGE } from './editorWebBridge';
+import { handleEditorNativeMessage } from './editorNativeBridge';
 
 export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
-  ({ code, originalCode, language, onChangeCode, readOnly = false, filePath, onFocus, onBlur }, ref) => {
-    const { theme, isDark } = useAppTheme();
+  ({ code, language, onChangeCode, onSaveCode, readOnly = false, filePath, onFocus, onBlur }, ref) => {
+    const { isDark } = useAppTheme();
     const { settings } = useSettings();
     const webViewRef = useRef<WebView>(null);
     const isLoaded = useRef(false);
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const latestCode = useRef(code);
+    const mounted = useRef(true);
+    const [editorError, setEditorError] = useState('');
+    useEffect(() => {
+      mounted.current = true;
+      return () => { mounted.current = false; isLoaded.current = false; };
+    }, []);
 
     // Provide initial values without causing remounts when props change
     const initialCode = useRef(code);
@@ -86,9 +96,10 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
     const fontSize = settings.fontSize || 14;
     const fontFamily = settings.fontFamily || 'monospace';
 
-    const htmlContent = `<!DOCTYPE html>
+    const htmlContent = React.useMemo(() => `<!DOCTYPE html>
 <html>
 <head>
+  <script>${EDITOR_WEB_BRIDGE}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <style>
     html, body {
@@ -176,12 +187,14 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
     var initialVal = decodeURIComponent('${encodeURIComponent(initialCode.current).replace(/'/g, "%27")}');
     editor.setValue(initialVal, -1);
 
-    editor.session.on('change', function(delta) {
-      if (window.changeTimeout) clearTimeout(window.changeTimeout);
-      window.changeTimeout = setTimeout(function() {
-        var val = editor.getValue();
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'change', value: val }));
-      }, 300);
+    var changeTimer = null;
+    editor.session.on('change', function() {
+      if (window.devfluxExternalUpdate) return;
+      if (changeTimer) clearTimeout(changeTimer);
+      changeTimer = setTimeout(function() {
+        changeTimer = null;
+        window.devfluxPost({ type: 'change', value: editor.getValue() });
+      }, 80);
     });
 
     editor.on('focus', function() {
@@ -192,14 +205,22 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'blur' }));
     });
 
-    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
-
     window.updateCode = function(newCode) {
       var current = editor.getValue();
       if (newCode !== current) {
+        window.devfluxExternalUpdate = true;
         var pos = editor.getCursorPosition();
+        var scrollTop = editor.session.getScrollTop();
         editor.setValue(newCode, -1);
-        editor.moveCursorToPosition(pos);
+        try {
+          var maxRow = editor.session.getLength() - 1;
+          if (pos.row <= maxRow) {
+            var maxCol = editor.session.getLine(pos.row).length;
+            editor.moveCursorToPosition({ row: pos.row, column: Math.min(pos.column, maxCol) });
+          }
+          editor.session.setScrollTop(scrollTop);
+        } catch(e) {}
+        window.devfluxExternalUpdate = false;
       }
     };
 
@@ -212,63 +233,115 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
     window.doRedo = function() { editor.redo(); };
 
     window.handleToolbarAction = function(type, meta) {
+      if (type === 'modifier') {
+        window.devfluxSetModifiers(meta);
+        if (meta.ctrlKey || meta.shiftKey || meta.altKey) editor.focus();
+        return;
+      }
+      window.devfluxSetModifiers({});
+      editor.focus();
       if (type === 'insert') {
         editor.insert(meta.text || '');
+      } else if (type === 'gotoLine') {
+        editor.gotoLine(Number(meta.line || meta), 0, true);
       } else if (type === 'keypress') {
         var key = meta.key;
+        try {
         if (meta.ctrlKey) {
-          if (key === 'c') { editor.execCommand('copy'); return; }
-          if (key === 'x') { editor.execCommand('cut'); return; }
-          if (key === 'v') { editor.execCommand('paste'); return; }
-          if (key === 'z') { editor.undo(); return; }
+          if (key.length === 1) key = key.toLowerCase();
+          if (key === 'c' || key === 'x' || key === 'v') {
+            var selection = editor.getSelectionRange().clone();
+            var value = editor.getValue();
+            if (key !== 'v' && selection.isEmpty()) {
+              selection.start.column = 0;
+              selection.end.row = Math.min(selection.start.row + 1, editor.session.getLength() - 1);
+              selection.end.column = selection.end.row > selection.start.row ? 0 : editor.session.getLine(selection.end.row).length;
+            }
+            window.devfluxClipboard(key === 'v' ? 'paste' : 'copy', editor.session.getTextRange(selection), meta, function(text) {
+              if (key === 'c') return;
+              if (editor.getReadOnly() || editor.getValue() !== value) throw new Error('Editor changed while clipboard was pending.');
+              editor.session.markUndoGroup();
+              editor.selection.setSelectionRange(selection);
+              editor.insert(key === 'x' ? '' : String(text || '').replace(/\\r\\n?/g, '\\n'));
+              editor.session.markUndoGroup();
+            });
+            return;
+          }
+          if (key === 'z') { meta.shiftKey ? editor.redo() : editor.undo(); return; }
           if (key === 'y') { editor.redo(); return; }
           if (key === 'a') { editor.selectAll(); return; }
+          if (key === 'd') { editor.execCommand('selectMoreAfter'); return; }
           if (key === 'f') { editor.execCommand('find'); return; }
-          if (key === 's') { return; }
+          if (key === 's') { window.devfluxPost({ type: 'save', content: editor.getValue(), requestId: meta.requestId }); return; }
         }
-        if (key === 'Tab') { editor.indent(); }
-        else if (key === 'Enter') { editor.insert('\n'); }
+        if (key === 'Tab') { meta.shiftKey ? editor.blockOutdent() : editor.indent(); }
+        else if (key === 'Enter') { editor.insert('\\n'); }
         else if (key === 'Backspace') { editor.remove('left'); }
-        else if (key === 'Escape') { editor.blur(); }
+        else if (key === 'Escape') { if (editor.completer) editor.completer.detach(); }
         else if (key === 'Undo') { editor.undo(); }
         else if (key === 'Redo') { editor.redo(); }
         else if (key === 'Search') { editor.execCommand('find'); }
-        else if (key === 'ArrowLeft') { editor.navigateLeft(1); }
-        else if (key === 'ArrowRight') { editor.navigateRight(1); }
-        else if (key === 'ArrowUp') { editor.navigateUp(1); }
-        else if (key === 'ArrowDown') { editor.navigateDown(1); }
-        else if (key.length === 1) { editor.insert(key); }
+        else if (key === 'ArrowLeft') { editor.execCommand(meta.ctrlKey ? (meta.shiftKey ? 'selectwordleft' : 'gotowordleft') : (meta.shiftKey ? 'selectleft' : 'gotoleft')); }
+        else if (key === 'ArrowRight') { editor.execCommand(meta.ctrlKey ? (meta.shiftKey ? 'selectwordright' : 'gotowordright') : (meta.shiftKey ? 'selectright' : 'gotoright')); }
+        else if (key === 'ArrowUp') { meta.shiftKey ? editor.selection.selectUp() : editor.navigateUp(1); }
+        else if (key === 'ArrowDown') { meta.shiftKey ? editor.selection.selectDown() : editor.navigateDown(1); }
+        else if (key.length === 1 && !meta.ctrlKey && !meta.altKey && !editor.getReadOnly()) { editor.insert(meta.shiftKey ? key.toUpperCase() : key); }
+        } catch (error) {
+          window.devfluxComplete(meta, String(error));
+        } finally {
+          if (!(meta.ctrlKey && ['c', 'x', 'v', 's'].indexOf(key) >= 0)) window.devfluxComplete(meta);
+        }
       }
     };
+    window.devfluxInstallModifiers(function(meta) { window.handleToolbarAction('keypress', meta); });
+    function handleMessage(event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch (error) { return; }
+      if (msg.type === 'updateValue') window.updateCode(msg.value);
+      else if (msg.type === 'clipboardResult') window.devfluxClipboardResult(msg);
+      else if (msg.type === 'toolbarAction') window.handleToolbarAction(msg.actionType, msg.meta);
+      else if (msg.type === 'settings') {
+        editor.setReadOnly(msg.readOnly);
+        editor.session.setMode('ace/mode/' + msg.mode);
+        editor.setOptions(msg.options);
+      }
+    }
+    window.addEventListener('message', handleMessage);
+    document.addEventListener('message', handleMessage);
+    window.devfluxPost({ type: 'ready' });
   </script>
 </body>
 </html>
-    `;
+    `, []);
 
-    // Sync code changes to the editor without remounting
+    const post = (msg: any) => {
+      if (!isLoaded.current || !mounted.current) return;
+      if (Platform.OS === 'web') iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), '*');
+      else webViewRef.current?.postMessage(JSON.stringify(msg));
+    };
+
+    const syncSettings = () => post({
+      type: 'settings', readOnly, mode: getAceMode(language),
+      options: { fontSize, fontFamily, wrap: settings.wordWrap === 'on', showLineNumbers: settings.lineNumbers === 'on' },
+    });
+
+    // Track the last value Ace reported so we can skip echoing it back.
+    // Without this guard, every keystroke causes: Ace change -> React setCode ->
+    // useEffect[code] -> postMessage(updateValue) -> Ace setValue -> cursor reset.
+    const lastAceValue = useRef(code);
+
+    // Sync code changes to the editor — only for EXTERNAL changes (file load,
+    // LiveSync, AI edit). Typing-originated values already exist in Ace.
     useEffect(() => {
-      if (isLoaded.current && webViewRef.current) {
-        const encoded = encodeURIComponent(code).replace(/'/g, "%27");
-        webViewRef.current.injectJavaScript(`
-          if (window.updateCode) {
-            window.updateCode(decodeURIComponent('${encoded}'));
-          }
-          true;
-        `);
-      }
+      latestCode.current = code;
+      if (code === lastAceValue.current) return;
+      post({ type: 'updateValue', value: code });
     }, [code]);
 
     // Sync font size/family changes dynamically (no remount)
     useEffect(() => {
-      if (isLoaded.current && webViewRef.current) {
-        webViewRef.current.injectJavaScript(`
-          if (window.updateFont) {
-            window.updateFont(${fontSize}, '${fontFamily}');
-          }
-          true;
-        `);
-      }
-    }, [fontSize, fontFamily]);
+      syncSettings();
+    }, [fontSize, fontFamily, language, readOnly, settings.wordWrap, settings.lineNumbers]);
 
     React.useImperativeHandle(ref, () => ({
       undo: () => {
@@ -278,20 +351,53 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
         webViewRef.current?.injectJavaScript(`window.doRedo && window.doRedo(); true;`);
       },
       handleToolbarAction: (type, meta) => {
-        const payload = JSON.stringify({ type, meta: meta || {} });
-        webViewRef.current?.injectJavaScript(`
-          if (window.handleToolbarAction) {
-            var p = ${payload};
-            window.handleToolbarAction(p.type, p.meta);
-          }
-          true;
-        `);
+        post({ type: 'toolbarAction', actionType: type, meta: meta || {} });
       }
     }));
 
+    const handleMessage = (event: any) => {
+      if (!mounted.current) return;
+      try {
+        const data = JSON.parse(event.nativeEvent.data);
+        void handleEditorNativeMessage(data, post, () => mounted.current && (global as any).activeInputTarget === 'editor', filePath, onSaveCode);
+        if (data.type === 'ready') {
+          isLoaded.current = true;
+          post({ type: 'updateValue', value: latestCode.current });
+          syncSettings();
+          DebugService.log('editor', 'info', 'Ace pronto.', { file: filePath, bytes: latestCode.current.length });
+        } else if (data.type === 'error') {
+          setEditorError(data.message);
+          DebugService.log('editor', 'error', data.message, { project: ContextManager.getActiveProject() || undefined, file: filePath, engine: 'ace' });
+        } else if (data.type === 'change') {
+          lastAceValue.current = data.value;
+          latestCode.current = data.value;
+          onChangeCode(data.value);
+        } else if (data.type === 'focus' && !readOnly) {
+          (global as any).activeInputTarget = 'editor';
+          DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: 'editor', keyboardExpected: true });
+          onFocus?.();
+        } else if (data.type === 'blur') onBlur?.();
+      } catch (error) {
+        DebugService.log('editor', 'error', 'Mensagem invalida do Ace.', { file: filePath, error: String(error) });
+      }
+    };
+    const messageHandler = useRef(handleMessage);
+    useEffect(() => { messageHandler.current = handleMessage; });
+    useEffect(() => {
+      if (Platform.OS !== 'web') return;
+      const receive = (event: MessageEvent) => {
+        if (event.source === iframeRef.current?.contentWindow) messageHandler.current({ nativeEvent: { data: event.data } });
+      };
+      window.addEventListener('message', receive);
+      return () => window.removeEventListener('message', receive);
+    }, []);
+
     return (
       <View style={styles.container}>
-        <WebView
+        {!!editorError && <Text style={{ color: '#EF4444', padding: 12 }}>{editorError}</Text>}
+        {Platform.OS === 'web' ? (
+          <iframe ref={iframeRef} srcDoc={htmlContent} style={{ border: 0, width: '100%', height: '100%', flex: 1 }} />
+        ) : <WebView
           ref={webViewRef}
           source={{ html: htmlContent }}
           style={styles.webview}
@@ -302,26 +408,8 @@ export const LightweightEditor = forwardRef<CodeEditorRef, CodeEditorProps>(
           showsVerticalScrollIndicator={false}
           keyboardDisplayRequiresUserAction={false}
           hideKeyboardAccessoryView={true}
-          onMessage={(event) => {
-            try {
-              const data = JSON.parse(event.nativeEvent.data);
-              if (data.type === 'ready') {
-                isLoaded.current = true;
-              } else if (data.type === 'error') {
-                DebugService.log('editor', 'error', data.message || 'Erro no editor Ace.', { project: ContextManager.getActiveProject() || undefined, file: filePath, engine: 'ace' });
-              } else if (data.type === 'change') {
-                onChangeCode(data.value);
-              } else if (data.type === 'focus') {
-                // Ace got explicit focus — claim activeInputTarget so Shell toolbar is suppressed
-                (global as any).activeInputTarget = 'editor';
-                DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: 'editor' });
-                onFocus?.();
-              } else if (data.type === 'blur') {
-                onBlur?.();
-              }
-            } catch (e) {}
-          }}
-        />
+          onMessage={handleMessage}
+        />}
       </View>
     );
   }

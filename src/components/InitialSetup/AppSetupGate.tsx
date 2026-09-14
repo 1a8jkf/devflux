@@ -6,7 +6,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { Icon } from '../Icon';
 
-const CORE_SETUP_PACKAGES = ['nodejs', 'npm', 'git', 'python3', 'build-base', 'curl', 'wget', 'openssh-client', 'sshpass'];
+const CORE_SETUP_PACKAGES = ['nodejs', 'npm', 'git', 'python3', 'build-base', 'curl', 'wget', 'openssh-client', 'sshpass', 'util-linux-misc'];
 
 const OPTIONAL_PACKAGES = [
   { id: 'nodejs', label: 'Node.js', desc: 'Runtime JavaScript' },
@@ -37,7 +37,7 @@ export const AppSetupGate: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Step 0: Editor configuration state
   const { settings, updateSettings } = useSettings();
-  const [step0Engine, setStep0Engine] = React.useState<'monaco' | 'lightweight'>(settings.editorEngine || 'monaco');
+  const [step0Engine, setStep0Engine] = React.useState<'monaco' | 'lightweight'>(settings.editorEngine || 'lightweight');
   const [step0FontSize, setStep0FontSize] = React.useState<number>(settings.fontSize || 14);
   const [previewLine, setPreviewLine] = React.useState(0);
 
@@ -328,7 +328,7 @@ export const AppSetupGate: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Step 0: save editor & font preferences and proceed to packages install
   const handleStep0Continue = async () => {
-    updateSettings({ editorEngine: step0Engine, fontSize: step0FontSize });
+    await updateSettings({ editorEngine: step0Engine, fontSize: step0FontSize });
     const pendingPackages = selectedSetupPackages.filter(pkg => !installedPackages[pkg]);
     if (pendingPackages.length > 0) {
       setSetupStep(2);

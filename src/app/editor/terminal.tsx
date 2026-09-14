@@ -26,9 +26,6 @@ export default function TerminalScreen() {
           <Icon name="Terminal" size={18} color={theme.colors.accentBlue} />
           <Text style={styles.title}>{t('Terminal do Projeto')}</Text>
         </View>
-        <Text style={{ fontFamily: theme.typography.mono, fontSize: 12, color: theme.colors.textSecondary }}>
-          /projects/{projectId || 'workspace'}
-        </Text>
       </View>
       <TerminalView projectId={projectId} sessionId={`editor-tab-${projectId || 'global'}`} />
     </View>

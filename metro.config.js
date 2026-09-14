@@ -2,6 +2,12 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
+const existingBlockList = config.resolver.blockList;
+config.resolver.blockList = [
+  ...(Array.isArray(existingBlockList) ? existingBlockList : [existingBlockList].filter(Boolean)),
+  /[/\\]dist[/\\]native-node[/\\]/,
+];
+
 config.resolver.extraNodeModules = {
   ...config.resolver.extraNodeModules,
   net: require.resolve('./src/polyfills/net.js'),

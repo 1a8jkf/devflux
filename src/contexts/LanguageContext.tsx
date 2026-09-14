@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Language, translations, getTranslation } from '../i18n';
 
@@ -14,17 +14,24 @@ interface LanguageContextProps {
 const LanguageContext = createContext<LanguageContextProps>({
   language: DEFAULT_LANGUAGE,
   setLanguage: async () => {},
-  t: (key: string, fallback?: string) => fallback || key,
+  t: (key: string, fallback?: string) => {
+    const value = getTranslation(translations.en, key);
+    return value === key ? fallback || key : value;
+  },
 });
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(DEFAULT_LANGUAGE);
   const [isLoaded, setIsLoaded] = useState(false);
+  const selectionRevision = useRef(0);
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const loadLanguage = async () => {
+      const revision = selectionRevision.current;
       try {
         const stored = await AsyncStorage.getItem(LANGUAGE_STORAGE_KEY);
+        if (selectionRevision.current !== revision) return;
         if (stored && ['pt', 'en', 'es'].includes(stored)) {
           setLanguageState(stored as Language);
         } else {
@@ -39,16 +46,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     loadLanguage();
   }, []);
 
-  const setLanguage = async (lang: Language) => {
-    try {
-      await AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
-      setLanguageState(lang);
-    } catch (e) {
-      console.error('Failed to save language', e);
-    }
-  };
+  const setLanguage = useCallback(async (lang: Language) => {
+    if (!['pt', 'en', 'es'].includes(lang)) return;
+    selectionRevision.current++;
+    setLanguageState(lang);
+    writeQueue.current = writeQueue.current.catch(() => {}).then(() => AsyncStorage.setItem(LANGUAGE_STORAGE_KEY, lang));
+    try { await writeQueue.current; }
+    catch (e) { console.error('Failed to save language', e); }
+  }, []);
 
-  const t = (key: string, fallback?: string) => {
+  const t = useCallback((key: string, fallback?: string) => {
     const dict = translations[language] || translations[DEFAULT_LANGUAGE];
     let text = getTranslation(dict, key);
     
@@ -61,7 +68,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     
     return text;
-  };
+  }, [language]);
 
   if (!isLoaded) return null;
 

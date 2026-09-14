@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Alert, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLanguage } from '../contexts/LanguageContext';
 import { NodeRunner } from '../utils/nodeRunner';
+import { NpmService } from '../services/NpmService';
 
 type TemplateType = 'html' | 'node' | 'react' | 'blank';
 
@@ -33,6 +34,9 @@ export default function NovoProjetoScreen() {
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
   const [alpineInstalled, setAlpineInstalled] = useState<boolean | null>(null);
   const [showAlpineModal, setShowAlpineModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [creationStatus, setCreationStatus] = useState('');
 
   useEffect(() => {
     const check = async () => {
@@ -91,7 +95,7 @@ export default function NovoProjetoScreen() {
   };
 
   const handleCreateProject = async () => {
-    if (!newProjectName.trim() || !selectedType) return;
+    if (!newProjectName.trim() || !selectedType || creatingRef.current) return;
 
     // Block if Alpine Linux is not installed
     if (!alpineInstalled) {
@@ -99,19 +103,42 @@ export default function NovoProjetoScreen() {
       return;
     }
 
-    const projectType = selectedType === 'blank' ? 'html' : selectedType;
-    const newProject = await FileSystemService.createProject(newProjectName.trim(), projectType, selectedPackages);
-
-    // Redirect to editor with terminal expansion params
-    router.replace({
-      pathname: '/editor/codigo',
-      params: {
-        projectId: newProject.id,
-        isNewProject: 'true',
-        deps: selectedPackages.join(','),
-        templateType: selectedType
-      }
-    });
+    creatingRef.current = true;
+    setCreating(true);
+    setCreationStatus(t('Criando arquivos...'));
+    try {
+      const newProject = await FileSystemService.createProject(newProjectName.trim(), selectedType, selectedPackages);
+      const openProject = () => {
+        creatingRef.current = false;
+        setCreating(false);
+        router.replace({
+          pathname: '/editor/codigo',
+          params: { projectId: newProject.id, isNewProject: 'true', templateType: selectedType,
+            openFile: selectedType === 'react' ? 'src/App.jsx' : selectedType === 'node' ? 'server.js' : selectedType === 'html' ? 'index.html' : '' },
+        });
+      };
+      const installAndOpen = async () => {
+        try {
+          if (selectedType === 'react' || (selectedType === 'node' && selectedPackages.length > 0)) {
+            setCreationStatus(t('Instalando dependências...'));
+            await NpmService.runCommand(newProject.id, ['install']);
+          }
+          openProject();
+        } catch (error: any) {
+          setCreationStatus(t('Arquivos criados. Instalação pendente.'));
+          Alert.alert(t('Dependências não instaladas'), error.message, [
+            { text: t('Abrir arquivos'), onPress: openProject },
+            { text: t('Tentar novamente'), onPress: () => void installAndOpen() },
+          ], { cancelable: false });
+        }
+      };
+      await installAndOpen();
+    } catch (error: any) {
+      creatingRef.current = false;
+      setCreating(false);
+      setCreationStatus('');
+      Alert.alert(t('Falha ao criar projeto'), error.message);
+    }
   };
 
   const togglePackage = (pkg: string) => {
@@ -127,7 +154,7 @@ export default function NovoProjetoScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
     >
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => step > 1 ? setStep(step - 1) : router.back()}>
+        <TouchableOpacity disabled={creating} onPress={() => step > 1 ? setStep(step - 1) : router.back()}>
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('Novo Projeto (Wizard)')}</Text>
@@ -248,6 +275,7 @@ export default function NovoProjetoScreen() {
                   return (
                     <TouchableOpacity
                       key={pkg}
+                      disabled={creating}
                       style={[styles.chip, isSelected && styles.chipSelected]}
                       onPress={() => togglePackage(pkg)}
                     >
@@ -259,8 +287,9 @@ export default function NovoProjetoScreen() {
               </View>
             )}
 
-            <TouchableOpacity style={[styles.nextButton, { marginTop: 32, backgroundColor: theme.colors.success }]} onPress={handleCreateProject}>
-              <Text style={styles.nextButtonText}>{t('Montar Projeto e Abrir Shell')}</Text>
+            {!!creationStatus && <Text style={styles.helperText}>{creationStatus}</Text>}
+            <TouchableOpacity disabled={creating} style={[styles.nextButton, { marginTop: 32, backgroundColor: theme.colors.success }, creating && styles.disabledButton]} onPress={handleCreateProject}>
+              <Text style={styles.nextButtonText}>{t(creating ? 'Preparando projeto...' : 'Criar projeto')}</Text>
               <Icon name="Terminal" size={20} color="#FFF" />
             </TouchableOpacity>
           </View>

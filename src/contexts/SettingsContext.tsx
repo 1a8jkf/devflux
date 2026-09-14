@@ -20,7 +20,7 @@ interface SettingsContextType {
 }
 
 const defaultSettings: EditorSettings = {
-  editorEngine: 'monaco',
+  editorEngine: 'lightweight',
   fontSize: 14,
   wordWrap: 'on',
   minimap: false,
@@ -44,8 +44,10 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const loadSettings = async () => {
       try {
         const saved = await AsyncStorage.getItem('@codeflex_settings');
-        if (saved) {
-          setSettings({ ...defaultSettings, ...JSON.parse(saved) });
+        const loaded = { ...defaultSettings, ...(saved ? JSON.parse(saved) : {}) };
+        setSettings(loaded);
+        if (!saved || !JSON.parse(saved).editorEngine) {
+          await AsyncStorage.setItem('@codeflex_settings', JSON.stringify(loaded));
         }
       } catch (e) {
         console.error('Failed to load settings', e);

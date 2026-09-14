@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator, ScrollView, Modal, Keyboard, DeviceEventEmitter, Dimensions } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
@@ -11,9 +11,10 @@ import { MonacoEditor } from '../components/MonacoEditor';
 import { AIService, Message } from '../services/AIService';
 import { ContextManager } from '../services/ContextManager';
 import { DebugService } from '../services/DebugService';
+import { useLanguage } from '../contexts/LanguageContext';
 
 
-const configHasKey = (config: AIProviderConfig) => config.apiKey.trim().length > 10 && config.model.trim().length > 0;
+const configHasKey = (config: AIProviderConfig) => config.apiKey.trim().length > 0 && config.model.trim().length > 0;
 
 export default function AIPanelScreen() {
   const { theme } = useAppTheme();
@@ -21,11 +22,13 @@ export default function AIPanelScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const { t, language } = useLanguage();
 
   const [pendingWrite, setPendingWrite] = useState<{ path: string, content: string, originalContent: string } | null>(null);
   const pendingResolver = useRef<((value: boolean) => void) | null>(null);
   const { settings, isConfigured, isLoading: isSettingsLoading, configs, activeConfigId, selectConfig } = useAISettings();
-  const initialProjectId = Array.isArray(params.projectId) ? params.projectId[0] : (params.projectId as string) || null;
+  const routeProjectId = Array.isArray(params.projectId) ? params.projectId[0] : (params.projectId as string) || null;
+  const initialProjectId = routeProjectId || ContextManager.getActiveProject();
   const initialProjectIdRef = useRef<string | null>(initialProjectId);
   const [projectId, setProjectId] = useState<string | null>(initialProjectId);
   const [allProjects, setAllProjects] = useState<ProjectInfo[]>([]);
@@ -34,12 +37,17 @@ export default function AIPanelScreen() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [requestError, setRequestError] = useState<unknown>(null);
+  const [historyProjectId, setHistoryProjectId] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
+    const currentProject = routeProjectId || ContextManager.getActiveProject();
+    if (currentProject) setProjectId(currentProject);
     (global as any).activeInputTarget = 'chat';
     DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
-  }, []);
+    return () => { pendingResolver.current?.(false); };
+  }, [routeProjectId]));
 
   useEffect(() => {
     if (!projectId) return;
@@ -59,11 +67,11 @@ export default function AIPanelScreen() {
       return;
     }
 
-    DebugService.log('ai', 'warn', 'Chat aberto sem configuração de IA cadastrada.');
+    DebugService.log('ai', 'warn', 'AI chat opened without a saved configuration.');
     router.replace('/ai-settings');
   }, [isSettingsLoading, isConfigured, configs, selectConfig, router]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const updateFromKeyboard = (e?: any) => {
       DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
       const windowHeight = Dimensions.get('window').height;
@@ -99,24 +107,24 @@ export default function AIPanelScreen() {
       hideSub.remove();
       cleanupViewport?.();
     };
-  }, [insets.bottom]);
+  }, [insets.bottom]));
 
   useEffect(() => {
-    if (isSettingsLoading || !isConfigured) return;
-
+    let mounted = true;
     const loadProjects = async () => {
       try {
         const projs = await FileSystemService.getProjects();
+        if (!mounted) return;
         setAllProjects(projs);
-        const selectedProjectId = projectId || projs[0]?.id || null;
-        if (!projectId && selectedProjectId) setProjectId(selectedProjectId);
+        setProjectId(current => current || ContextManager.getActiveProject() || projs[0]?.id || null);
       } catch (e: any) {
-        DebugService.log('file', 'error', 'Projetos não carregaram para o Chat IA.', { error: e?.message || String(e) });
+        DebugService.log('file', 'error', 'Projects could not be loaded for AI chat.', { error: e?.message || String(e) });
       }
     };
 
     loadProjects();
-  }, [isSettingsLoading, isConfigured, projectId]);
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     if (!projectId || !isConfigured) return;
@@ -125,11 +133,9 @@ export default function AIPanelScreen() {
     const loadConversation = async () => {
       const history = await AIService.loadHistory(projectId);
       if (!mounted) return;
-      if (history.length > 0) {
-        setMessages(history);
-      } else {
-        setMessages([{ role: 'assistant', content: 'Olá! Sou seu Agente IA Autônomo. Como posso ajudar com seu código hoje?' }]);
-      }
+      setHistoryProjectId(projectId);
+      setMessages(history);
+      setRequestError(null);
     };
 
     loadConversation();
@@ -138,12 +144,14 @@ export default function AIPanelScreen() {
 
   const getSystemPrompt = async (projectName: string) => {
     const context = await ContextManager.buildContextString();
-    return `Você é o DevFlux Copilot, um Agente IA autônomo dentro de uma IDE Mobile.
-Você está trabalhando no projeto "${projectName}".
-${context ? `Contexto Atual:\n${context}` : ''}
-Você PODE ler e modificar o sistema de arquivos local do usuário usando tools.
-Sempre que o usuário pedir para modificar um arquivo, use a tool 'write_file'.
-Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
+    const responseLanguage = { en: 'English', pt: 'Portuguese', es: 'Spanish' }[language];
+    return `You are DevFlux Copilot, a coding assistant inside a mobile IDE.
+Current project: ${JSON.stringify(projectName)}.
+${context ? `Project context:\n${context}` : ''}
+Use read_file before editing an existing file and write_file to propose a requested change.
+Writes require the user's approval. Never claim a write succeeded unless the tool confirms it.
+Respond in ${responseLanguage} unless the user explicitly requests another language.
+Keep explanations concise. Do not translate source code, paths, model identifiers or credentials.`;
   };
 
   const executeToolCall = async (toolCall: any): Promise<string> => {
@@ -151,12 +159,12 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       const args = JSON.parse(toolCall.function.arguments);
       if (toolCall.function.name === 'list_dir') {
         const tree = await FileSystemService.getProjectFileTree(projectId!);
-        DebugService.log('ai', 'info', 'IA listou arquivos do projeto.', { project: projectId! });
+        DebugService.log('ai', 'info', 'AI listed project files.', { project: projectId! });
         return JSON.stringify(tree);
       }
       if (toolCall.function.name === 'read_file') {
         const content = await FileSystemService.readFile(projectId!, args.path);
-        DebugService.log('ai', 'info', 'IA leu arquivo do projeto.', { project: projectId!, file: args.path, bytes: content.length });
+        DebugService.log('ai', 'info', 'AI read a project file.', { project: projectId!, file: args.path, bytes: content.length });
         return content;
       }
       if (toolCall.function.name === 'write_file') {
@@ -172,36 +180,37 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
 
         if (approved) {
           await FileSystemService.writeFile(projectId!, args.path, args.content);
-          DebugService.log('ai', 'info', `Arquivo ${args.path} modificado pela IA.`, { project: projectId!, file: args.path });
+          DebugService.log('ai', 'info', `File ${args.path} was modified by AI.`, { project: projectId!, file: args.path });
           return `File ${args.path} written successfully.`;
         }
 
-        DebugService.log('ai', 'warn', `Usuário rejeitou alteração no arquivo ${args.path}.`, { project: projectId!, file: args.path });
+        DebugService.log('ai', 'warn', `User rejected the AI change to ${args.path}.`, { project: projectId!, file: args.path });
         return `User rejected the write operation for ${args.path}.`;
       }
       return 'Tool not found';
     } catch (e: any) {
-      DebugService.log('ai', 'error', `Erro executando tool da IA: ${e.message}`, { project: projectId || undefined, tool: toolCall?.function?.name });
+      DebugService.log('ai', 'error', `Error running AI tool: ${e.message}`, { project: projectId || undefined, tool: toolCall?.function?.name });
       return `Error executing tool: ${e.message}`;
     }
   };
 
   const handleSend = async () => {
-    if (!input.trim() || !projectId || !isConfigured) return;
+    if (!input.trim() || !projectId || !isConfigured || isLoading || historyProjectId !== projectId) return;
+    setIsLoading(true);
+    setRequestError(null);
 
     const userMsg: Message = { role: 'user', content: input.trim() };
     setInput('');
 
     const project = allProjects.find(p => p.id === projectId);
-    const systemContent = await getSystemPrompt(project?.name || 'Desconhecido');
-    const systemPrompt: Message = { role: 'system', content: systemContent };
-
     let currentMessages = [...messages, userMsg];
     setMessages(currentMessages);
     setIsLoading(true);
-    DebugService.log('ai', 'info', 'Gerando resposta...', { project: projectId, provider: settings.provider, model: settings.model });
+    DebugService.log('ai', 'info', 'Generating AI response...', { project: projectId, provider: settings.provider, model: settings.model });
 
     try {
+      const systemContent = await getSystemPrompt(project?.name || projectId);
+      const systemPrompt: Message = { role: 'system', content: systemContent };
       let isDone = false;
       let conversation = [systemPrompt, ...currentMessages];
 
@@ -231,10 +240,10 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
           isDone = true;
         }
       }
-      DebugService.log('ai', 'info', 'Resposta recebida.', { project: projectId, provider: settings.provider, model: settings.model });
+      DebugService.log('ai', 'info', 'AI response received.', { project: projectId, provider: settings.provider, model: settings.model });
     } catch (e: any) {
-      DebugService.log('ai', 'error', `Falha na requisição: ${e.message}`, { project: projectId, provider: settings.provider, model: settings.model });
-      setMessages([...currentMessages, { role: 'assistant', content: `Erro: ${e.message}` }]);
+      DebugService.log('ai', 'error', `AI request failed: ${e.message}`, { project: projectId, provider: settings.provider, model: settings.model });
+      setRequestError(e);
     } finally {
       setIsLoading(false);
     }
@@ -245,7 +254,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       type: 'function',
       function: {
         name: 'list_dir',
-        description: 'Lista todos os arquivos do projeto atual.',
+        description: 'List all files in the current project.',
         parameters: { type: 'object', properties: {}, required: [] }
       }
     },
@@ -253,11 +262,11 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       type: 'function',
       function: {
         name: 'read_file',
-        description: 'Lê o conteúdo de um arquivo.',
+        description: 'Read the contents of a file.',
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'Caminho do arquivo (ex: src/index.js)' }
+            path: { type: 'string', description: 'File path, for example src/index.js' }
           },
           required: ['path']
         }
@@ -267,12 +276,12 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       type: 'function',
       function: {
         name: 'write_file',
-        description: 'Cria ou sobrescreve um arquivo no projeto.',
+        description: 'Create or overwrite a file in the current project.',
         parameters: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: 'Caminho do arquivo' },
-            content: { type: 'string', description: 'Conteúdo completo do arquivo' }
+            path: { type: 'string', description: 'File path' },
+            content: { type: 'string', description: 'Full file contents' }
           },
           required: ['path', 'content']
         }
@@ -287,7 +296,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       return (
         <View style={[styles.messageBubble, styles.toolBubble]}>
           <Icon name="Wrench" size={14} color={theme.colors.accentPurple} style={{ marginRight: 6 }} />
-          <Text style={styles.toolText}>Executando ação...</Text>
+          <Text style={styles.toolText}>{t('Executando ação...')}</Text>
         </View>
       );
     }
@@ -301,7 +310,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
 
   const configuredConfigs = configs.filter(configHasKey);
   const activeProject = allProjects.find(p => p.id === projectId);
-  const selectedProjectLabel = activeProject?.name || projectId || 'Nenhum projeto';
+  const selectedProjectLabel = activeProject?.name || projectId || t('Nenhum projeto');
 
   return (
     <View style={styles.container}>
@@ -310,7 +319,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
           <Icon name="ArrowLeft" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Chat IA</Text>
+          <Text style={styles.title}>{t('Chat IA')}</Text>
           <Text style={styles.subtitle} numberOfLines={1}>{selectedProjectLabel} → {settings.model}</Text>
         </View>
 
@@ -320,10 +329,10 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
 
       <View style={styles.flowPanel}>
         <View style={styles.selectorRow}>
-          <Text style={styles.selectorLabel}>Projeto</Text>
+          <Text style={styles.selectorLabel}>{t('Projeto')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.selectorScroller} keyboardShouldPersistTaps="handled">
             {allProjects.length > 0 ? allProjects.map(p => (
-              <TouchableOpacity key={p.id} style={[styles.optionChip, projectId === p.id && styles.optionChipActive]} onPress={() => setProjectId(p.id)}>
+              <TouchableOpacity key={p.id} disabled={isLoading} style={[styles.optionChip, projectId === p.id && styles.optionChipActive]} onPress={() => setProjectId(p.id)}>
                 <Text style={[styles.optionChipText, projectId === p.id && styles.optionChipTextActive]} numberOfLines={1}>{p.name}</Text>
               </TouchableOpacity>
             )) : projectId ? (
@@ -335,11 +344,11 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
         </View>
 
         <View style={[styles.selectorRow, styles.lastSelectorRow]}>
-          <Text style={styles.selectorLabel}>Modelo</Text>
+          <Text style={styles.selectorLabel}>{t('IA salva')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.selectorScroller} keyboardShouldPersistTaps="handled">
             {configuredConfigs.map(config => (
-              <TouchableOpacity key={config.id} style={[styles.optionChip, activeConfigId === config.id && styles.optionChipActive]} onPress={() => selectConfig(config.id)}>
-                <Text style={[styles.optionChipText, activeConfigId === config.id && styles.optionChipTextActive]} numberOfLines={1}>{config.model}</Text>
+              <TouchableOpacity key={config.id} disabled={isLoading} style={[styles.optionChip, activeConfigId === config.id && styles.optionChipActive]} onPress={() => selectConfig(config.id)}>
+                <Text style={[styles.optionChipText, activeConfigId === config.id && styles.optionChipTextActive]}>{config.name} · {config.model}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -347,7 +356,10 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       </View>
       <FlatList
         ref={flatListRef}
-        data={messages}
+        data={historyProjectId === projectId ? messages : []}
+        extraData={language}
+        ListEmptyComponent={historyProjectId === projectId ? <Text style={styles.messageText}>{t('chat.welcome')}</Text> : null}
+        ListFooterComponent={requestError ? <Text accessibilityRole="alert" style={styles.messageText}>{t('Error')}: {AIService.describeError(requestError, t)}</Text> : null}
         renderItem={renderMessage}
         keyExtractor={(_, index) => index.toString()}
         style={styles.messagesList}
@@ -360,7 +372,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
       <View style={[styles.inputContainer, { paddingBottom: Math.max(12, keyboardInset + 8) }]}>
         <TextInput
           style={styles.input}
-          placeholder={projectId ? 'Peça para a IA editar algo...' : 'Selecione um projeto primeiro'}
+          placeholder={t(projectId ? 'Peça para a IA editar algo...' : 'Selecione um projeto primeiro')}
           placeholderTextColor={theme.colors.textSecondary}
           value={input}
           onChangeText={setInput}
@@ -373,7 +385,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
         <TouchableOpacity
           style={[styles.sendBtn, (!input.trim() || isLoading || !isConfigured) && { opacity: 0.5 }]}
           onPress={handleSend}
-          disabled={!input.trim() || isLoading || !isConfigured}
+          disabled={!input.trim() || isLoading || !isConfigured || historyProjectId !== projectId}
         >
           {isLoading ? <ActivityIndicator color="#FFF" size="small" /> : <Icon name="Send" size={20} color="#FFF" />}
         </TouchableOpacity>
@@ -383,7 +395,7 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Revisão Necessária</Text>
+              <Text style={styles.modalTitle}>{t('Revisão Necessária')}</Text>
               <Text style={styles.modalSubtitle}>{pendingWrite?.path}</Text>
             </View>
             <View style={{ flex: 1 }}>
@@ -399,10 +411,10 @@ Seja conciso nas suas respostas em texto, pois estamos no mobile.`;
             </View>
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.modalBtn, styles.modalBtnReject]} onPress={() => { pendingResolver.current?.(false); setPendingWrite(null); }}>
-                <Text style={styles.modalBtnText}>Rejeitar</Text>
+                <Text style={styles.modalBtnText}>{t('Rejeitar')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.modalBtn, styles.modalBtnApprove]} onPress={() => { pendingResolver.current?.(true); setPendingWrite(null); }}>
-                <Text style={styles.modalBtnText}>Aprovar</Text>
+                <Text style={styles.modalBtnText}>{t('Aprovar')}</Text>
               </TouchableOpacity>
             </View>
           </View>

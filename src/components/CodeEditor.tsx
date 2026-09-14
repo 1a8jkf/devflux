@@ -8,6 +8,7 @@ export interface CodeEditorProps {
   originalCode?: string;
   language: string;
   onChangeCode: (code: string) => void;
+  onSaveCode?: (code: string) => Promise<void>;
   readOnly?: boolean;
   filePath?: string;
   filePaths?: string[];
@@ -24,7 +25,7 @@ export interface CodeEditorRef {
 export const CodeEditor = forwardRef<CodeEditorRef, CodeEditorProps>((props, ref) => {
   const { settings } = useSettings();
 
-  if (settings.editorEngine === 'lightweight') {
+  if (settings.editorEngine !== 'monaco') {
     return <LightweightEditor {...props} ref={ref} />;
   }
 

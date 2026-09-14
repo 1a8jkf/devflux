@@ -1,19 +1,27 @@
-import React, { useRef, useEffect, forwardRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform, DeviceEventEmitter, Keyboard } from 'react-native';
+import React, { useRef, useEffect, useState, forwardRef } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, Platform, DeviceEventEmitter } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { DebugService } from '../services/DebugService';
 import { ContextManager } from '../services/ContextManager';
+import { EDITOR_WEB_BRIDGE } from './editorWebBridge';
+import { handleEditorNativeMessage } from './editorNativeBridge';
 
 import { CodeEditorProps, CodeEditorRef } from './CodeEditor';
 
-export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, originalCode, language, onChangeCode, readOnly = false, filePath, onFocus, onBlur }, ref) => {
+export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, originalCode, language, onChangeCode, onSaveCode, readOnly = false, filePath, onFocus, onBlur }, ref) => {
   const { theme, isDark } = useAppTheme();
   const { settings } = useSettings();
   const webViewRef = useRef<WebView>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const isLoaded = useRef(false);
+  const mounted = useRef(true);
+  const [editorError, setEditorError] = useState('');
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; isLoaded.current = false; };
+  }, []);
 
   // Map our language names to Monaco language IDs
   const getMonacoLanguage = (lang: string) => {
@@ -60,6 +68,7 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
 <!DOCTYPE html>
 <html>
 <head>
+  <script>${EDITOR_WEB_BRIDGE}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <style>
     * {
@@ -342,13 +351,10 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
       }, true);
 
       // Send updates to React Native with a short debounce to avoid serializing massive JSON on every keystroke
-      var typingTimeout = null;
       modelEditor.onDidChangeModelContent(function() {
-        if (typingTimeout) clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(function() {
-          var content = modelEditor.getValue();
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'change', content: content }));
-        }, 20);
+        if (!window.devfluxExternalUpdate) {
+          window.devfluxPost({ type: 'change', content: modelEditor.getValue() });
+        }
       });
 
       modelEditor.onDidFocusEditorText(function() {
@@ -384,8 +390,12 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
         try { msg = JSON.parse(event.data); } catch(e) { return; }
         if (msg.type === 'updateValue') {
           if (modelEditor.getValue() !== msg.value) {
+            window.devfluxExternalUpdate = true;
             modelEditor.setValue(msg.value);
+            window.devfluxExternalUpdate = false;
           }
+        } else if (msg.type === 'clipboardResult') {
+          window.devfluxClipboardResult(msg);
         } else if (msg.type === 'updateTheme') {
           monaco.editor.setTheme(msg.theme);
         } else if (msg.type === 'updateLanguage') {
@@ -406,38 +416,15 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
           if (msg.action === 'undo') modelEditor.trigger('keyboard', 'undo', null);
           if (msg.action === 'redo') modelEditor.trigger('keyboard', 'redo', null);
         } else if (msg.type === 'toolbarAction') {
-          focusMonacoInput();
-          if (modelEditor && typeof modelEditor.focus === 'function') modelEditor.focus();
           if (msg.actionType === 'modifier') {
-            window.keyboardModifiers = msg.meta;
+            window.devfluxSetModifiers(msg.meta);
+            if (msg.meta.ctrlKey || msg.meta.shiftKey || msg.meta.altKey) focusMonacoInput();
             return;
           }
+          focusMonacoInput();
+          if (modelEditor && typeof modelEditor.focus === 'function') modelEditor.focus();
           if (msg.actionType === 'keypress') {
-            var key = msg.meta.key;
-            if (msg.meta.ctrlKey) {
-              if (key === 'c') { modelEditor.trigger('keyboard', 'editor.action.clipboardCopyAction', null); return; }
-              if (key === 'x') { modelEditor.trigger('keyboard', 'editor.action.clipboardCutAction', null); return; }
-              if (key === 'v') { modelEditor.trigger('keyboard', 'editor.action.clipboardPasteAction', null); return; }
-              if (key === 'z') { modelEditor.trigger('keyboard', 'undo', null); return; }
-              if (key === 'y') { modelEditor.trigger('keyboard', 'redo', null); return; }
-              if (key === 'a') { modelEditor.setSelection(modelEditor.getModel().getFullModelRange()); return; }
-              if (key === 'f') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
-              if (key === 's') { return; }
-            }
-            if (key === 'Escape') { modelEditor.trigger('keyboard', 'closeFindWidget', null); return; }
-            if (key === 'Enter') { if (acceptVisibleSuggestion()) return; modelEditor.trigger('keyboard', 'type', { text: '\n' }); return; }
-            if (key === 'Tab') { modelEditor.trigger('keyboard', 'tab', null); return; }
-            if (key === 'Backspace') { modelEditor.trigger('keyboard', 'deleteLeft', null); return; }
-            if (key === 'Undo' || key === 'undo') { modelEditor.trigger('keyboard', 'undo', null); return; }
-            if (key === 'Redo' || key === 'redo') { modelEditor.trigger('keyboard', 'redo', null); return; }
-            if (key === 'Search' || key === 'search') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
-            if (key === 'ArrowLeft') { modelEditor.trigger('keyboard', 'cursorLeft', null); return; }
-            if (key === 'ArrowRight') { modelEditor.trigger('keyboard', 'cursorRight', null); return; }
-            if (key === 'ArrowUp') { modelEditor.trigger('keyboard', 'cursorUp', null); return; }
-            if (key === 'ArrowDown') { modelEditor.trigger('keyboard', 'cursorDown', null); return; }
-            if (key.length >= 1) {
-              modelEditor.trigger('keyboard', 'type', { text: key }); return;
-            }
+            runKey(msg.meta);
           }
         } else if (msg.type === 'gotoLine') {
           modelEditor.setPosition({ lineNumber: msg.line, column: 1 });
@@ -445,21 +432,66 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
           modelEditor.focus();
         }
       };
+      function runKey(meta) {
+          window.devfluxSetModifiers({});
+          var msg = { meta: meta };
+          var key = meta.key;
+          try {
+            if (msg.meta.ctrlKey) {
+              if (key.length === 1) key = key.toLowerCase();
+              if (key === 'c' || key === 'x' || key === 'v') {
+                var model = modelEditor.getModel();
+                var version = model.getVersionId();
+                var selection = modelEditor.getSelection();
+                if (key !== 'v' && selection.isEmpty()) {
+                  var line = selection.startLineNumber;
+                  selection = new monaco.Range(line, 1, line < model.getLineCount() ? line + 1 : line, line < model.getLineCount() ? 1 : model.getLineMaxColumn(line));
+                }
+                window.devfluxClipboard(key === 'v' ? 'paste' : 'copy', model.getValueInRange(selection), meta, function(text) {
+                  if (key === 'c') return;
+                  if (window.__isReadOnly || version !== model.getVersionId()) throw new Error('Editor changed while clipboard was pending.');
+                  modelEditor.pushUndoStop();
+                  modelEditor.executeEdits('devflux-clipboard', [{ range: selection, text: key === 'x' ? '' : normalizePastedCode(text), forceMoveMarkers: true }]);
+                  modelEditor.pushUndoStop();
+                });
+                return;
+              }
+              if (key === 'z') { modelEditor.trigger('keyboard', meta.shiftKey ? 'redo' : 'undo', null); return; }
+              if (key === 'y') { modelEditor.trigger('keyboard', 'redo', null); return; }
+              if (key === 'a') { modelEditor.setSelection(modelEditor.getModel().getFullModelRange()); return; }
+              if (key === 'd') { modelEditor.trigger('keyboard', 'editor.action.addSelectionToNextFindMatch', null); return; }
+              if (key === 'f') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
+              if (key === 's') { window.devfluxPost({ type: 'save', content: modelEditor.getValue(), requestId: meta.requestId }); return; }
+            }
+            if (key === 'Escape') { modelEditor.trigger('keyboard', 'closeFindWidget', null); return; }
+            if (key === 'Enter') { if (acceptVisibleSuggestion()) return; modelEditor.trigger('keyboard', 'type', { text: '\\n' }); return; }
+            if (key === 'Tab') { modelEditor.trigger('keyboard', meta.shiftKey ? 'outdent' : 'tab', null); return; }
+            if (key === 'Backspace') { modelEditor.trigger('keyboard', 'deleteLeft', null); return; }
+            if (key === 'Undo' || key === 'undo') { modelEditor.trigger('keyboard', 'undo', null); return; }
+            if (key === 'Redo' || key === 'redo') { modelEditor.trigger('keyboard', 'redo', null); return; }
+            if (key === 'Search' || key === 'search') { modelEditor.trigger('keyboard', 'actions.find', null); return; }
+            if (key.indexOf('Arrow') === 0) {
+              var direction = key.slice(5);
+              var byWord = meta.ctrlKey && (direction === 'Left' || direction === 'Right');
+              modelEditor.trigger('keyboard', 'cursor' + (byWord ? 'Word' : '') + direction + (meta.shiftKey ? 'Select' : ''), null);
+              return;
+            }
+            if (key.length === 1 && !meta.ctrlKey && !meta.altKey && !window.__isReadOnly) {
+              modelEditor.trigger('keyboard', 'type', { text: meta.shiftKey ? key.toUpperCase() : key }); return;
+            }
+          } catch (error) {
+            window.devfluxComplete(meta, String(error));
+          } finally {
+            if (!(meta.ctrlKey && ['c', 'x', 'v', 's'].indexOf(key) >= 0)) window.devfluxComplete(meta);
+          }
+      }
+      window.devfluxInstallModifiers(runKey);
       
-      window.keyboardModifiers = { ctrlKey: false, shiftKey: false, altKey: false };
       document.addEventListener('keydown', function(e) {
          if (e.key === 'Enter' && acceptVisibleSuggestion()) {
            e.preventDefault();
            e.stopPropagation();
            return;
-         }
-         if (window.keyboardModifiers.ctrlKey && e.key && e.key.length === 1) {
-           var key = e.key.toLowerCase();
-           if (key === 'c') { modelEditor.trigger('keyboard', 'editor.action.clipboardCopyAction', null); e.preventDefault(); }
-           if (key === 'v') { modelEditor.trigger('keyboard', 'editor.action.clipboardPasteAction', null); e.preventDefault(); }
-           if (key === 'x') { modelEditor.trigger('keyboard', 'editor.action.clipboardCutAction', null); e.preventDefault(); }
-           if (key === 'z') { modelEditor.trigger('keyboard', 'undo', null); e.preventDefault(); }
-           if (key === 'a') { modelEditor.setSelection(modelEditor.getModel().getFullModelRange()); e.preventDefault(); }
          }
       }, true);
       
@@ -481,7 +513,7 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
         };
         window.visualViewport.addEventListener('resize', updateViewport);
         window.visualViewport.addEventListener('scroll', updateViewport);
-        setTimeout(updateViewport, 100);
+        updateViewport();
       }
       
       window.addEventListener('message', handleMsg);
@@ -489,24 +521,20 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
       
       // Notify React Native that editor is ready
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
-    });
+    }, function(error) { window.devfluxPost({ type: 'error', message: String(error) }); });
   </script>
 </body>
 </html>
   `, []); // Static dependency array: the WebView HTML mounts ONCE. All dynamic states are synced via postMessage.
 
   const latestCode = useRef(code);
-  const onChangeCodeRef = useRef(onChangeCode);
-
-  useEffect(() => {
-    onChangeCodeRef.current = onChangeCode;
-  }, [onChangeCode]);
-
   // We handle [code] updates in a single useEffect below
 
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      if (!mounted.current) return;
+      void handleEditorNativeMessage(data, postToEditor, () => mounted.current && (global as any).activeInputTarget === 'editor', filePath, onSaveCode);
       if (data.type === 'change') {
         recentInternalChanges.current.push(data.content);
         if (recentInternalChanges.current.length > 10) {
@@ -527,8 +555,11 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
         // The toolbar is shown via requestNativeKeyboard (user tap) only.
         // Emitting on every internal Monaco 'focus' event causes the keyboard
         // toolbar to pop up while scrolling.
-        (global as any).activeInputTarget = 'editor';
-        if (onFocus) onFocus();
+        if (!readOnly) {
+          (global as any).activeInputTarget = 'editor';
+          DeviceEventEmitter.emit('SHOW_KEYBOARD_TOOLBAR', { target: 'editor', keyboardExpected: true });
+          if (onFocus) onFocus();
+        }
       } else if (data.type === 'blur') {
         if (onBlur) onBlur();
       } else if (data.type === 'ready') {
@@ -536,35 +567,24 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
         postToEditor({ type: 'updateValue', value: latestCode.current });
         postToEditor({ type: 'updateTheme', theme: monacoThemeName });
         postToEditor({ type: 'updateLanguage', language: getMonacoLanguage(language) });
+        postToEditor({ type: 'updateReadOnly', readOnly });
+        postToEditor({ type: 'updateSettings', settings: { fontSize: settings.fontSize, wordWrap: settings.wordWrap, minimap: { enabled: settings.minimap } } });
+        DebugService.log('editor', 'info', 'Monaco pronto.', { file: filePath, bytes: latestCode.current.length });
       } else if (data.type === 'error') {
+        setEditorError(data.message);
         console.error('Monaco Editor Error:', data.message);
         DebugService.log('editor', 'error', 'Monaco Editor Error: ' + data.message, { project: ContextManager.getActiveProject() || undefined, file: filePath, engine: 'monaco' });
       }
     } catch (e) {}
   };
 
+  const messageHandler = useRef(handleMessage);
+  useEffect(() => { messageHandler.current = handleMessage; });
   useEffect(() => {
     if (Platform.OS === 'web') {
       const handleWebMessage = (event: any) => {
-        try {
-          if (typeof event.data === 'string') {
-            const data = JSON.parse(event.data);
-            if (data.type === 'change') {
-              recentInternalChanges.current.push(data.content);
-              if (recentInternalChanges.current.length > 10) {
-                recentInternalChanges.current.shift();
-              }
-              latestCode.current = data.content;
-              onChangeCodeRef.current(data.content);
-            } else if (data.type === 'ready') {
-              isLoaded.current = true;
-              postToEditor({ type: 'updateValue', value: latestCode.current });
-              // For web, we need to pass the current dynamic states when ready
-              postToEditor({ type: 'updateTheme', theme: isDark ? 'devflux-dark' : 'vs' });
-              postToEditor({ type: 'updateLanguage', language: getMonacoLanguage(initialLanguage.current) });
-            }
-          }
-        } catch (e) {}
+        if (event.source !== iframeRef.current?.contentWindow) return;
+        messageHandler.current({ nativeEvent: { data: event.data } });
       };
       window.addEventListener('message', handleWebMessage);
       return () => window.removeEventListener('message', handleWebMessage);
@@ -639,6 +659,7 @@ export const MonacoEditor = forwardRef<CodeEditorRef, CodeEditorProps>(({ code, 
 
   return (
     <View style={styles.container}>
+      {!!editorError && <Text style={{ color: '#EF4444', padding: 12 }}>{editorError}</Text>}
       {Platform.OS === 'web' ? (
         <iframe
           ref={iframeRef as any}

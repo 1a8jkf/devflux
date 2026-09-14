@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Alert } from 'react-native';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon, IconName } from './Icon';
@@ -19,6 +19,7 @@ interface FileTreeProps {
   onFileLongPress?: (file: FileNode) => void;
   onFileDrop?: (source: FileNode, target: FileNode) => void;
   dirtyFileIds?: Set<string> | string[];
+  onLoadChildren?: (node: FileNode) => Promise<FileNode[]>;
 }
 
 const getFileIcon = (file: FileNode, theme: AppTheme): { name: IconName; color: string } => {
@@ -174,12 +175,13 @@ const FileTreeNode: React.FC<{
   );
 };
 
-export const FileTree: React.FC<FileTreeProps> = ({ data, onFilePress, onFileLongPress, onFileDrop, dirtyFileIds }) => {
+export const FileTree: React.FC<FileTreeProps> = ({ data, onFilePress, onFileLongPress, onFileDrop, dirtyFileIds, onLoadChildren }) => {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const { t } = useLanguage();
 
   const [treeData, setTreeData] = useState(data);
+  const loadingDirectories = React.useRef(new Set<string>());
   const [draggedNode, setDraggedNode] = useState<FileNode | null>(null);
 
   useEffect(() => {
@@ -190,7 +192,7 @@ export const FileTree: React.FC<FileTreeProps> = ({ data, onFilePress, onFileLon
         return {
           ...newNode,
           isExpanded: oldNode ? oldNode.isExpanded : false,
-          children: newNode.children && oldNode?.children ? mergeState(newNode.children, oldNode.children) : newNode.children
+          children: newNode.children && oldNode?.children ? mergeState(newNode.children, oldNode.children) : (newNode.children || oldNode?.children)
         };
       });
     };
@@ -209,8 +211,29 @@ export const FileTree: React.FC<FileTreeProps> = ({ data, onFilePress, onFileLon
     });
   };
 
-  const handleToggle = (id: string) => {
-    setTreeData(toggleExpand(id));
+  const handleToggle = async (id: string) => {
+    const find = (nodes: FileNode[]): FileNode | undefined => {
+      for (const node of nodes) {
+        if (node.id === id) return node;
+        const found = node.children && find(node.children);
+        if (found) return found;
+      }
+    };
+    const node = find(treeData);
+    if (node && !node.isExpanded && (node.childrenDeferred || !node.children) && onLoadChildren) {
+      if (loadingDirectories.current.has(id)) return;
+      loadingDirectories.current.add(id);
+      try {
+        const children = await onLoadChildren(node);
+        const apply = (nodes: FileNode[]): FileNode[] => nodes.map(item => item.id === id
+          ? { ...item, children, isExpanded: true }
+          : { ...item, children: item.children && apply(item.children) });
+        setTreeData(apply);
+      } catch (error) { Alert.alert(t('Erro'), String(error)); }
+      finally { loadingDirectories.current.delete(id); }
+    } else {
+      setTreeData(previous => toggleExpand(id, previous));
+    }
   };
 
   return (

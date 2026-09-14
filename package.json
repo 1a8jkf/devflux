@@ -10,6 +10,7 @@
     "buffer": "^6.0.3",
     "events": "^3.3.0",
     "expo": "~57.0.4",
+    "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.3",
     "expo-crypto": "~57.0.0",
     "expo-device": "~57.0.0",
@@ -55,6 +56,9 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "android:release": "bash scripts/build_android_release.sh aab",
+    "android:audit": "bash scripts/build_android_release.sh audit",
+    "android:native:check": "node scripts/check-android-native.cjs",
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",

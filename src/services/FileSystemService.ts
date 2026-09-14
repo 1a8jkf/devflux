@@ -5,13 +5,14 @@ import JSZip from 'jszip';
 import { GithubService } from './GithubService';
 import { GitService } from './GitService';
 import { DebugService } from './DebugService';
+import { projectTemplate, TemplateType } from './ProjectTemplates';
 
 const IS_WEB = Platform.OS === 'web';
 
 // Root directory for our IDE projects
 export const PROJECTS_ROOT = IS_WEB ? 'DevFluxProjects/' : `${documentDirectory || ''}DevFluxProjects/`;
 
-export type ProjectType = 'html' | 'node' | 'react' | 'git' | 'saf' | 'sync' | 'sync-local';
+export type ProjectType = TemplateType | 'git' | 'saf' | 'sync' | 'sync-local';
 
 export interface ProjectInfo {
   id: string;
@@ -34,6 +35,7 @@ export interface FileNode {
   type: 'file' | 'directory';
   fileType?: string; // 'html', 'css', 'js', 'jsx', 'json', etc.
   children?: FileNode[];
+  childrenDeferred?: boolean;
   isExpanded?: boolean;
   path: string;
 }
@@ -131,7 +133,7 @@ export const webGetInfo = (path: string) => {
   const vfs = getWebVFS();
 
   // Exact match for file
-  if (vfs[path] && vfs[path] !== '__DIR__') {
+  if (vfs[path] !== undefined && vfs[path] !== '__DIR__') {
     return { exists: true, isDirectory: false, modificationTime: Date.now() / 1000 };
   }
 
@@ -360,97 +362,37 @@ export const FileSystemService = {
   /**
    * Creates a new project with basic boilerplate
    */
-  async createProject(name: string, type: 'html' | 'node' | 'react' = 'html', dependencies: string[] = []) {
+  async createProject(name: string, type: TemplateType = 'html', dependencies: string[] = []) {
     await this.init();
+    const startedAt = Date.now();
+    const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'projeto';
+    const projectPath = `${PROJECTS_ROOT}${id}/`;
+    const files = projectTemplate(id, name, type, dependencies);
+    const info = IS_WEB ? webGetInfo(projectPath) : await getInfoAsync(projectPath);
+    if (info.exists) throw new Error('Ja existe um projeto com esse nome.');
+    const metadata: ProjectInfo = { id, name, updatedAt: Date.now(), type };
 
-    // Generate clean ID for the project (lowercase, no spaces, no timestamps)
-    let id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'projeto';
-    let projectPath = `${PROJECTS_ROOT}${id}/`;
-
-    // If project already exists, return it instead of creating a duplicate
-    if (!IS_WEB) {
-      const existsInfo = await getInfoAsync(projectPath);
-      if (existsInfo.exists) {
-        // Return existing project metadata
-        try {
-          const metaStr = await readAsStringAsync(`${projectPath}devflux.json`);
-          return JSON.parse(metaStr) as ProjectInfo;
-        } catch(e) {
-          // Metadata missing, recreate it below
-        }
+    try {
+      if (IS_WEB) webMakeDirectory(projectPath);
+      else await makeDirectoryAsync(projectPath, { intermediates: true });
+      for (const [file, content] of Object.entries(files)) {
+        await ensureParentDirectories(id, file);
+        if (IS_WEB) webWriteFile(projectPath + file, content);
+        else await writeAsStringAsync(projectPath + file, content);
+        const confirmed = IS_WEB ? webReadFile(projectPath + file) : await readAsStringAsync(projectPath + file);
+        if (confirmed !== content) throw new Error('Falha ao confirmar arquivo: ' + file);
       }
+      // Publish metadata only after every template file has been written and verified.
+      if (IS_WEB) webWriteFile(projectPath + 'devflux.json', JSON.stringify(metadata, null, 2));
+      else await writeAsStringAsync(projectPath + 'devflux.json', JSON.stringify(metadata, null, 2));
+      DebugService.log('file', 'info', 'Template criado e confirmado.', { project: id, template: type, fileCount: Object.keys(files).length, durationMs: Date.now() - startedAt });
+      this.notify();
+      return metadata;
+    } catch (error) {
+      DebugService.log('file', 'error', 'Falha ao criar template.', { project: id, template: type, error: String(error) });
+      throw error;
     }
-
-    // Create project folder
-    if (IS_WEB) {
-      webMakeDirectory(projectPath);
-    } else {
-      await makeDirectoryAsync(projectPath, { intermediates: true });
-    }
-
-    // Save metadata
-    const metadata: ProjectInfo = {
-      id,
-      name,
-      updatedAt: Date.now(),
-      type
-    };
-
-    const metaContent = JSON.stringify(metadata, null, 2);
-    if (IS_WEB) {
-      webWriteFile(`${projectPath}devflux.json`, metaContent);
-    } else {
-      await writeAsStringAsync(`${projectPath}devflux.json`, metaContent);
-    }
-
-    // Create boilerplate files based on type
-    if (type === 'html') {
-      const htmlCode = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${name}</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <h1>Hello ${name}</h1>
-  <p>Welcome to DevFlux IDE!</p>
-  <script src="script.js"></script>
-</body>
-</html>`;
-      const cssCode = `body {
-  font-family: system-ui, sans-serif;
-  background-color: #1e1e1e;
-  color: #ffffff;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  margin: 0;
-}`;
-      const jsCode = `console.log("Welcome to ${name}!");`;
-
-      if (IS_WEB) {
-        webWriteFile(`${projectPath}index.html`, htmlCode);
-        webWriteFile(`${projectPath}style.css`, cssCode);
-        webWriteFile(`${projectPath}script.js`, jsCode);
-      } else {
-        await writeAsStringAsync(`${projectPath}index.html`, htmlCode);
-        await writeAsStringAsync(`${projectPath}style.css`, cssCode);
-        await writeAsStringAsync(`${projectPath}script.js`, jsCode);
-      }
-    } else if (type === 'node') {
-      // Setup is now handled via terminal wizard in codigo.tsx
-    } else if (type === 'react') {
-      // Setup is now handled via terminal wizard in codigo.tsx
-    }
-
-    FileSystemService.notify();
-    return metadata;
   },
-
   /**
    * Imports an external folder via SAF
    */
@@ -664,6 +606,7 @@ export const FileSystemService = {
         : await readDirectoryAsync(PROJECTS_ROOT);
 
       for (const entry of entries) {
+        if (entry.startsWith('.devflux-import-')) continue;
         const projectPath = `${PROJECTS_ROOT}${entry}/`;
         const info = IS_WEB
           ? webGetInfo(projectPath)
@@ -676,7 +619,8 @@ export const FileSystemService = {
               : await readAsStringAsync(`${projectPath}devflux.json`);
 
             const meta = JSON.parse(metaContent);
-            projects.push(meta);
+            // The directory is authoritative; imported metadata may carry another id.
+            projects.push({ ...meta, id: entry });
           } catch (e) {
             // Fallback if metadata doesn't exist
             projects.push({
@@ -824,7 +768,7 @@ export const FileSystemService = {
   /**
    * Recursively reads the project directory to build a file tree
    */
-  async getProjectFileTree(projectId: string): Promise<FileNode[]> {
+  async getProjectFileTree(projectId: string, options: { relativePath?: string; shallow?: boolean; deferDirectories?: string[] } = {}): Promise<FileNode[]> {
     const projectPath = `${PROJECTS_ROOT}${projectId}/`;
 
     const readDir = async (currentPath: string, relativePath: string): Promise<FileNode[]> => {
@@ -845,13 +789,15 @@ export const FileSystemService = {
         const entryRelativePath = relativePath ? `${relativePath}/${entry}` : entry;
 
         if (info.isDirectory) {
-          const children = await readDir(`${fullPath}/`, entryRelativePath);
+          const deferred = options.shallow || options.deferDirectories?.includes(entry);
+          const children = deferred ? undefined : await readDir(`${fullPath}/`, entryRelativePath);
           nodes.push({
             id: entryRelativePath,
             name: entry,
             type: 'directory',
             path: entryRelativePath,
-            children
+            children,
+            childrenDeferred: !!deferred
           });
         } else {
           const extension = entry.split('.').pop()?.toLowerCase() || 'txt';
@@ -872,7 +818,8 @@ export const FileSystemService = {
       });
     }
 
-    return await readDir(projectPath, '');
+    const relativePath = normalizeProjectRelativePath(options.relativePath || '', true);
+    return await readDir(relativePath ? `${projectPath}${relativePath}/` : projectPath, relativePath);
   },
 
   async getRootFileTree(): Promise<FileNode[]> {
@@ -928,113 +875,74 @@ export const FileSystemService = {
    * Downloads a GitHub repository as a Zipball and extracts it into a new project
    */
   async downloadGitRepo(repoUrl: string): Promise<string> {
-    // Expected format: https://github.com/facebook/react or facebook/react
-    let owner = '';
-    let repo = '';
-
-    try {
-      if (repoUrl.includes('github.com')) {
-        const parts = repoUrl.split('github.com/')[1].split('/');
-        owner = parts[0];
-        repo = parts[1].replace('.git', '');
-      } else {
-        const parts = repoUrl.split('/');
-        owner = parts[0];
-        repo = parts[1];
-      }
-    } catch (e) {
-      throw new Error('Formato de URL do GitHub inválido. Use https://github.com/usuario/repo');
-    }
-
-    if (!owner || !repo) throw new Error('Não foi possível identificar o usuário e o repositório');
-
-    const zipUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/main`;
-    const projectName = repo;
-    const projectId = projectName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
-    const projectPath = `${PROJECTS_ROOT}${projectId}/`;
-
+    const match = repoUrl.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git\/?$/, '').match(/^([^/]+)\/([^/?#]+)\/?$/);
+    if (!match) throw new Error('Formato de URL do GitHub inválido. Use https://github.com/usuario/repo');
+    const [, owner, repo] = match;
+    const fullName = `${owner}/${repo}`;
     await this.init();
 
-    // 1. Create project dir
-    if (IS_WEB) {
-      webMakeDirectory(projectPath);
-    } else {
-      await makeDirectoryAsync(projectPath, { intermediates: true });
+    // Prefer the durable checkout, including after a process restart.
+    const existing = (await this.getProjects()).find(project => project.type === 'git' && project.githubRepo?.toLowerCase() === fullName.toLowerCase());
+    if (existing) {
+      const localPath = this.getProjectPath(existing.id);
+      const entries = IS_WEB ? webReadDirectory(localPath) : await readDirectoryAsync(localPath);
+      if (entries.some(entry => entry !== 'devflux.json')) return existing.id;
     }
 
-    // 2. Save metadata
-    const metadata: ProjectInfo = {
-      id: projectId,
-      name: projectName,
-      updatedAt: Date.now(),
-      type: 'git',
-      githubRepo: `${owner}/${repo}`
-    };
-    const metaContent = JSON.stringify(metadata, null, 2);
-    if (IS_WEB) {
-      webWriteFile(`${projectPath}devflux.json`, metaContent);
-    } else {
-      await writeAsStringAsync(`${projectPath}devflux.json`, metaContent);
-    }
+    const projectId = repo.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
+    const projectPath = this.getProjectPath(projectId);
+    // Stage on the same durable filesystem so only a complete download is published.
+    const stagingId = '.devflux-import-' + projectId;
+    const stagingPath = this.getProjectPath(stagingId);
+    const metadata: ProjectInfo = { id: projectId, name: repo, updatedAt: Date.now(), type: 'git', githubRepo: fullName };
+    try {
+      const token = await GithubService.getToken();
+      const response = await fetch(`https://api.github.com/repos/${fullName}/zipball`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(`Falha ao baixar o repositório: ${response.status}`);
+      const zip = await JSZip.loadAsync(await response.arrayBuffer());
+      if (IS_WEB) webMakeDirectory(stagingPath);
+      else await makeDirectoryAsync(stagingPath, { intermediates: true });
 
-    // 3. Fetch zipball
-    // Note: 'main' branch might fail if the default branch is 'master'. We try 'main' first.
-    let response = await fetch(zipUrl);
-    if (!response.ok && response.status === 404) {
-      // Fallback to master
-      response = await fetch(`https://api.github.com/repos/${owner}/${repo}/zipball/master`);
-      if (!response.ok) throw new Error('Falha ao baixar o repositório. O repositório é público e possui branch main/master?');
-    } else if (!response.ok) {
-      throw new Error('Falha ao comunicar com o GitHub');
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const zip = await JSZip.loadAsync(arrayBuffer);
-
-    // 4. Extract files
-    // GitHub zipballs have a root folder like owner-repo-commitHash/
-    // We need to strip that first directory from the path
-    const entries = Object.values(zip.files);
-
-    // Find the root folder name (the first part of the path of any file)
-    let rootFolderName = '';
-    if (entries.length > 0) {
-      rootFolderName = entries[0].name.split('/')[0] + '/';
-    }
-
-    for (const entry of entries) {
-      if (entry.dir) continue;
-
-      const relativePath = entry.name.replace(rootFolderName, '');
-      if (!relativePath) continue; // Skip if it somehow matches the root folder exactly
-
-      // Get content
-      const content = await entry.async('string');
-
-      // Ensure directory exists for this file
-      const pathParts = relativePath.split('/');
-      pathParts.pop(); // remove file name
-      if (pathParts.length > 0) {
-        let currentDir = '';
-        for (const part of pathParts) {
-          currentDir += (currentDir ? '/' : '') + part;
-          if (IS_WEB) {
-            webMakeDirectory(`${projectPath}${currentDir}`);
-          } else {
-            await makeDirectoryAsync(`${projectPath}${currentDir}`, { intermediates: true });
-          }
+      for (const entry of Object.values(zip.files)) {
+        if (entry.dir) continue;
+        const relativePath = normalizeProjectRelativePath(entry.name.split('/').slice(1).join('/'), true);
+        if (!relativePath || relativePath === 'devflux.json') continue;
+        await ensureParentDirectories(stagingId, relativePath);
+        if (IS_WEB) {
+          webWriteFile(stagingPath + relativePath, await entry.async('string'));
+        } else {
+          // UTF-8 decoding corrupts images and other binary repository files.
+          await writeAsStringAsync(stagingPath + relativePath, await entry.async('base64'), { encoding: 'base64' });
         }
       }
-
-      // Write file
+      const metaContent = JSON.stringify(metadata, null, 2);
       if (IS_WEB) {
-        webWriteFile(`${projectPath}${relativePath}`, content);
+        webWriteFile(stagingPath + 'devflux.json', metaContent);
+        const vfs = getWebVFS();
+        for (const key of Object.keys(vfs)) {
+          if (key.startsWith(stagingPath)) {
+            vfs[projectPath + key.slice(stagingPath.length)] = vfs[key];
+            delete vfs[key];
+          }
+        }
+        saveWebVFS(vfs);
       } else {
-        await writeAsStringAsync(`${projectPath}${relativePath}`, content);
+        await writeAsStringAsync(stagingPath + 'devflux.json', metaContent);
+        await moveAsync({ from: stagingPath, to: projectPath });
       }
+      this.notify();
+      return projectId;
+    } catch (error) {
+      if (IS_WEB) {
+        const vfs = getWebVFS();
+        for (const key of Object.keys(vfs)) if (key.startsWith(stagingPath)) delete vfs[key];
+        saveWebVFS(vfs);
+      } else {
+        await deleteAsync(stagingPath, { idempotent: true });
+      }
+      throw error;
     }
-
-    this.notify();
-    return projectId;
   }
 };

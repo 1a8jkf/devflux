@@ -1,514 +1,179 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, Modal, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from '../components/Icon';
-import { useAISettings } from '../contexts/AISettingsContext';
+import { AIProvider, AISettings, useAISettings } from '../contexts/AISettingsContext';
+import { AIService } from '../services/AIService';
 import { useLanguage } from '../contexts/LanguageContext';
 
-const providerDefaultModel = (provider: string) => {
-  if (provider === 'google') return 'gemini-1.5-pro';
-  if (provider === 'openai') return 'gpt-4o';
-  return 'anthropic/claude-3.5-sonnet';
-};
+const providers: { id: AIProvider; name: string }[] = [
+  { id: 'google', name: 'Google' }, { id: 'openrouter', name: 'OpenRouter' }, { id: 'openai', name: 'OpenAI' },
+];
 
 export default function AISettingsScreen() {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
-  const insets = useSafeAreaInsets();
-  const {
-    settings,
-    configs,
-    activeConfigId,
-    updateSettings,
-    createConfig,
-    selectConfig,
-    deleteConfig,
-    isConfigured,
-    isLoading
-  } = useAISettings();
   const { t } = useLanguage();
-  const [isTesting, setIsTesting] = React.useState(false);
-  const [testResult, setTestResult] = React.useState<{success: boolean, message: string} | null>(null);
-  const scrollRef = React.useRef<ScrollView>(null);
+  const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
+  const { settings, configs, activeConfigId, updateSettings, createConfig, selectConfig, deleteConfig, isLoading } = useAISettings();
+  const [draft, setDraft] = useState<AISettings>(settings);
+  const [savedVersion, setSavedVersion] = useState(settings);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message?: string; error?: unknown } | null>(null);
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [showModels, setShowModels] = useState(false);
+  const [query, setQuery] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const request = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  const working = useRef(false);
 
-  const handleTestConnection = async () => {
-    if (!settings.apiKey.trim()) {
-      setTestResult({ success: false, message: t('aiSettings.insertKeyFirst', 'Insira uma chave de API primeiro.') });
-      return;
-    }
+  if (settings.id !== savedVersion.id || settings.name !== savedVersion.name || settings.provider !== savedVersion.provider || settings.apiKey !== savedVersion.apiKey || settings.model !== savedVersion.model) {
+    setSavedVersion(settings);
+    setDraft(settings);
+    setResult(null);
+    setModels([]);
+    setShowKey(false);
+  }
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; request.current?.abort(); };
+  }, []);
 
-    setIsTesting(true);
-    setTestResult(null);
-
-    try {
-      let res;
-      if (settings.provider === 'google') {
-        const modelName = (settings.model || providerDefaultModel(settings.provider)).replace(/^models\//, '');
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${settings.apiKey.trim()}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Teste de conexão. Responda apenas "OK" se estiver tudo certo.' }] }]
-          })
-        });
-      } else {
-        const url = settings.provider === 'openrouter'
-          ? 'https://openrouter.ai/api/v1/chat/completions'
-          : 'https://api.openai.com/v1/chat/completions';
-
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.apiKey.trim()}`,
-        };
-
-        if (settings.provider === 'openrouter') {
-          headers['HTTP-Referer'] = 'https://devflux.app';
-          headers['X-Title'] = 'DevFlux Mobile IDE';
-        }
-
-        res = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            model: settings.model || providerDefaultModel(settings.provider),
-            messages: [{ role: 'user', content: 'Teste de conexão. Responda apenas "OK" se estiver tudo certo.' }],
-            max_tokens: 5,
-          })
-        });
-      }
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        let errorMsg = errorText;
-        try {
-            const json = JSON.parse(errorText);
-            errorMsg = json.error?.message || errorText;
-        } catch(e) {}
-        throw new Error(errorMsg);
-      }
-
-      setTestResult({ success: true, message: t('aiSettings.connectionSuccess', 'Conexão estabelecida com sucesso!') });
-    } catch (e: any) {
-      setTestResult({ success: false, message: `${t('aiSettings.connectionFailed', 'Falha na conexão:')} ${e.message}` });
+  const dirty = draft.name !== settings.name || draft.provider !== settings.provider || draft.apiKey !== settings.apiKey || draft.model !== settings.model;
+  const change = (values: Partial<AISettings>) => {
+    setDraft(previous => ({ ...previous, ...values }));
+    setResult(null);
+    if (values.apiKey !== undefined || values.provider !== undefined) setModels([]);
+  };
+  const run = async (action: (signal: AbortSignal) => Promise<void>) => {
+    if (working.current) return;
+    working.current = true;
+    setBusy(true);
+    setResult(null);
+    const controller = new AbortController();
+    request.current = controller;
+    try { await action(controller.signal); }
+    catch (error: any) {
+      if (mounted.current && !controller.signal.aborted) setResult({ success: false, error });
     } finally {
-      setIsTesting(false);
+      working.current = false;
+      if (mounted.current) setBusy(false);
     }
   };
+  const switchConfig = (action: () => Promise<unknown>) => {
+    const execute = () => { void run(async () => { await action(); }); };
+    if (dirty) Alert.alert(t('Alterações não salvas'), t('Descartar as alterações desta configuração?'), [
+      { text: t('Cancelar'), style: 'cancel' }, { text: t('Descartar'), style: 'destructive', onPress: execute },
+    ]);
+    else execute();
+  };
+  const loadModels = () => run(async signal => {
+    const available = await AIService.listModels(draft, signal);
+    if (!mounted.current || signal.aborted) return;
+    setModels(available);
+    setQuery('');
+    setShowModels(true);
+  });
+  const disabled = isLoading || busy;
+  const hasKey = !!draft.apiKey.trim();
+  const hasModel = !!draft.model.trim();
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
-    >
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 140 }]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
-      >
-        <View style={styles.infoBox}>
-          <Icon name="Info" size={20} color={theme.colors.accentBlue} style={{ marginRight: 12 }} />
-          <Text style={styles.infoText}>
-            {t('aiSettings.infoText', 'O DevFlux usa a abordagem BYOK (Bring Your Own Key). Suas chaves são salvas apenas no seu dispositivo e as requisições vão direto do seu celular para a provedora.')}
-          </Text>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={headerHeight}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]} keyboardShouldPersistTaps="handled">
+        <View style={styles.sectionHeader}>
+          <Text style={styles.heading}>{t('Configurações salvas')}</Text>
+          <TouchableOpacity accessibilityLabel={t('Nova configuração')} style={styles.iconButton} disabled={disabled} onPress={() => switchConfig(() => createConfig())}><Icon name="Plus" size={20} color={theme.colors.textPrimary} /></TouchableOpacity>
         </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{t('CONFIGURAÇÕES SALVAS')}</Text>
-            <TouchableOpacity
-              style={styles.smallActionBtn}
-              disabled={isLoading}
-              onPress={async () => {
-                await createConfig();
-                setTestResult(null);
-                setTimeout(() => scrollRef.current?.scrollTo({ y: 110, animated: true }), 120);
-              }}
-            >
-              <Icon name="Plus" size={14} color={theme.colors.textPrimary} style={{ marginRight: 6 }} />
-              <Text style={styles.smallActionText}>{t('Nova')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {configs.map(config => (
-              <TouchableOpacity
-                key={config.id}
-                style={[styles.configChip, activeConfigId === config.id && styles.configChipActive]}
-                onPress={async () => {
-                  await selectConfig(config.id);
-                  setTestResult(null);
-                }}
-              >
-                <Text style={[styles.configChipName, activeConfigId === config.id && styles.configChipTextActive]} numberOfLines={1}>
-                  {config.name}
-                </Text>
-                <Text style={[styles.configChipModel, activeConfigId === config.id && styles.configChipTextActive]} numberOfLines={1}>
-                  {config.provider} · {config.model || providerDefaultModel(config.provider)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('NOME DA CONFIGURAÇÃO')}</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="OpenRouter principal"
-            placeholderTextColor={theme.colors.border}
-            value={settings.name}
-            onChangeText={(text) => {
-              updateSettings({ name: text });
-              setTestResult(null);
-            }}
-            autoCorrect={false}
-            spellCheck={false}
-          />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('PROVEDOR')}</Text>
-          <View style={styles.providerRow}>
-            <TouchableOpacity
-              style={[styles.providerBtn, settings.provider === 'google' && styles.providerBtnActive]}
-              onPress={() => {
-                updateSettings({ provider: 'google' });
-                setTestResult(null);
-              }}
-            >
-              <Icon name="Globe" size={16} color={settings.provider === 'google' ? theme.colors.bgPrimary : theme.colors.textPrimary} />
-              <Text style={[styles.providerText, settings.provider === 'google' && styles.providerTextActive]}>Google</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.providerBtn, settings.provider === 'openrouter' && styles.providerBtnActive]}
-              onPress={() => {
-                updateSettings({ provider: 'openrouter' });
-                setTestResult(null);
-              }}
-            >
-              <Icon name="Box" size={16} color={settings.provider === 'openrouter' ? theme.colors.bgPrimary : theme.colors.textPrimary} />
-              <Text style={[styles.providerText, settings.provider === 'openrouter' && styles.providerTextActive]}>OpenRouter</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.providerBtn, settings.provider === 'openai' && styles.providerBtnActive]}
-              onPress={() => {
-                updateSettings({ provider: 'openai' });
-                setTestResult(null);
-              }}
-            >
-              <Icon name="Cpu" size={16} color={settings.provider === 'openai' ? theme.colors.bgPrimary : theme.colors.textPrimary} />
-              <Text style={[styles.providerText, settings.provider === 'openai' && styles.providerTextActive]}>OpenAI</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('CHAVE DE API')}</Text>
-          <Text style={styles.helperText}>{t('Insira sua chave')} {settings.provider === 'openrouter' ? 'do OpenRouter (sk-or...)' : settings.provider === 'google' ? 'do Google AI Studio (AIza... ou AQ...)' : 'da OpenAI (sk-...)'}</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="sk-..."
-            placeholderTextColor={theme.colors.border}
-            value={settings.apiKey}
-            onChangeText={(text) => {
-              updateSettings({ apiKey: text });
-              setTestResult(null);
-            }}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            spellCheck={false}
-            autoComplete="off"
-            importantForAutofill="no"
-            disableFullscreenUI
-            onFocus={() => setTimeout(() => scrollRef.current?.scrollTo({ y: 280, animated: true }), 120)}
-          />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t('MODELO')}</Text>
-          <Text style={styles.helperText}>
-            {t('Exemplos:')} {settings.provider === 'openrouter'
-              ? 'anthropic/claude-3.5-sonnet, openai/gpt-4o'
-              : settings.provider === 'google'
-              ? 'gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash-exp'
-              : 'gpt-4o, gpt-4o-mini'}
-          </Text>
-          <TextInput
-            style={styles.input}
-            placeholder={providerDefaultModel(settings.provider)}
-            placeholderTextColor={theme.colors.border}
-            value={settings.model}
-            onChangeText={(text) => {
-              updateSettings({ model: text });
-              setTestResult(null);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            spellCheck={false}
-            autoComplete="off"
-            importantForAutofill="no"
-            keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
-            disableFullscreenUI
-            onFocus={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120)}
-          />
-        </View>
-
-        <View style={styles.testConnectionContainer}>
-          <TouchableOpacity
-            style={[styles.testBtn, { backgroundColor: isTesting || !settings.apiKey.trim() ? theme.colors.bgSurface : theme.colors.accentBlue }]}
-            onPress={handleTestConnection}
-            disabled={isTesting || !settings.apiKey.trim()}
-          >
-            {isTesting ? (
-              <Text style={[styles.testBtnText, { color: theme.colors.textSecondary }]}>{t('Testando...')}</Text>
-            ) : (
-              <>
-                <Icon name="Activity" size={20} color={!settings.apiKey.trim() ? theme.colors.textSecondary : "#FFF"} style={{ marginRight: 8 }} />
-                <Text style={[styles.testBtnText, { color: !settings.apiKey.trim() ? theme.colors.textSecondary : "#FFF" }]}>{t('Testar Conexão')}</Text>
-              </>
-            )}
+        {configs.map(config => (
+          <TouchableOpacity key={config.id} accessibilityRole="radio" accessibilityState={{ checked: activeConfigId === config.id }} disabled={disabled} onPress={() => switchConfig(() => selectConfig(config.id))} style={[styles.configRow, activeConfigId === config.id && styles.selected]}>
+            <Icon name={activeConfigId === config.id ? 'CircleDot' : 'Circle'} size={18} color={theme.colors.accentBlue} />
+            <View style={styles.flex}><Text style={styles.text}>{config.name}</Text><Text style={styles.secondary}>{providers.find(p => p.id === config.provider)?.name} · {config.model || t('Sem modelo')}</Text></View>
           </TouchableOpacity>
-
-          {testResult ? (
-            <View style={[styles.statusBox, { backgroundColor: testResult.success ? theme.colors.success + '20' : theme.colors.error + '20' }]}>
-              <Icon
-                name={testResult.success ? 'CheckCircle' : 'XCircle'}
-                size={20}
-                color={testResult.success ? theme.colors.success : theme.colors.error}
-              />
-              <Text style={[styles.statusText, { color: testResult.success ? theme.colors.success : theme.colors.error }]}>
-                {testResult.message}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.statusBox}>
-              <Icon
-                name={isConfigured ? 'CheckCircle' : 'Info'}
-                size={20}
-                color={isConfigured ? theme.colors.success : theme.colors.textSecondary}
-              />
-              <Text style={[styles.statusText, { color: isConfigured ? theme.colors.success : theme.colors.textSecondary }]}>
-                {isConfigured ? t('aiSettings.saved', 'Configuração salva localmente') : t('aiSettings.notConfigured', 'Chave não configurada')}
-              </Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={[styles.deleteBtn, configs.length <= 1 && { opacity: 0.45 }]}
-            disabled={configs.length <= 1}
-            onPress={async () => {
-              await deleteConfig(activeConfigId);
-              setTestResult(null);
-            }}
-          >
-            <Icon name="Trash2" size={16} color={theme.colors.error} style={{ marginRight: 8 }} />
-            <Text style={styles.deleteBtnText}>{t('Excluir configuração atual')}</Text>
-          </TouchableOpacity>
+        ))}
+        <Text style={styles.label}>{t('Nome da configuração')}</Text>
+        <TextInput accessibilityLabel={t('Nome da configuração')} style={styles.input} value={draft.name} editable={!disabled} onChangeText={name => change({ name })} autoCorrect={false} />
+        <Text style={styles.label}>{t('Provedor')}</Text>
+        <View style={styles.providerRow}>
+          {providers.map(provider => (
+            <TouchableOpacity key={provider.id} accessibilityRole="radio" accessibilityState={{ checked: draft.provider === provider.id }} style={[styles.provider, draft.provider === provider.id && styles.selected]} disabled={disabled} onPress={() => {
+              if (draft.provider !== provider.id) change({ provider: provider.id, apiKey: '', model: '' });
+            }}><Text style={styles.text}>{provider.name}</Text></TouchableOpacity>
+          ))}
         </View>
+        <Text style={styles.label}>{t('Chave de API')}</Text>
+        <View style={styles.fieldRow}>
+          <TextInput accessibilityLabel={t('Chave de API')} style={[styles.input, styles.flex]} value={draft.apiKey} editable={!disabled} onChangeText={apiKey => change({ apiKey })} secureTextEntry={!showKey} autoCapitalize="none" autoCorrect={false} autoComplete="off" importantForAutofill="no" disableFullscreenUI />
+          <TouchableOpacity style={styles.iconButton} accessibilityLabel={t(showKey ? 'Ocultar chave' : 'Mostrar chave')} onPress={() => setShowKey(value => !value)}><Icon name={showKey ? 'EyeOff' : 'Eye'} size={20} color={theme.colors.textSecondary} /></TouchableOpacity>
+        </View>
+        <Text style={styles.label}>{t('Modelo')}</Text>
+        <View style={styles.fieldRow}>
+          <TextInput accessibilityLabel={t('Modelo')} style={[styles.input, styles.flex]} value={draft.model} editable={!disabled} onChangeText={model => change({ model })} autoCapitalize="none" autoCorrect={false} autoComplete="off" importantForAutofill="no" disableFullscreenUI />
+          <TouchableOpacity style={styles.iconButton} accessibilityLabel={t('Selecionar modelo do provedor')} disabled={disabled || !hasKey} onPress={() => void loadModels()}><Icon name="ListFilter" size={20} color={theme.colors.accentBlue} /></TouchableOpacity>
+        </View>
+        <TouchableOpacity style={styles.listButton} disabled={disabled || !hasKey} onPress={() => void loadModels()}>
+          <Icon name="RefreshCw" size={16} color={theme.colors.accentBlue} /><Text style={[styles.text, { color: theme.colors.accentBlue }]}>{t('Modelos do provedor')}</Text>
+        </TouchableOpacity>
+        <View style={styles.actions}>
+          <TouchableOpacity style={[styles.button, styles.primary, (disabled || !dirty || !hasKey || !hasModel) && styles.disabled]} disabled={disabled || !dirty || !hasKey || !hasModel} onPress={() => void run(async () => { await updateSettings({ ...draft, id: activeConfigId, model: AIService.normalizeModel(draft) }); })}>
+            <Icon name="Save" size={18} color="#FFFFFF" /><Text style={styles.buttonText}>{t('Salvar')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.button, (disabled || !hasKey || !hasModel) && styles.disabled]} disabled={disabled || !hasKey || !hasModel} onPress={() => void run(async signal => {
+            await AIService.testConnection(draft, signal);
+            if (mounted.current && !signal.aborted) setResult({ success: true, message: 'Modelo respondeu com sucesso.' });
+          })}><Icon name="Activity" size={18} color={theme.colors.textPrimary} /><Text style={styles.text}>{t('Testar modelo')}</Text></TouchableOpacity>
+        </View>
+        {busy && <ActivityIndicator style={{ marginVertical: 12 }} />}
+        {result ? <Text accessibilityRole="alert" style={[styles.status, { color: result.success ? theme.colors.success : theme.colors.error }]}>{result.error ? AIService.describeError(result.error, t) : t(result.message || '')}</Text> : <Text style={styles.secondary}>{t(dirty ? 'Alterações não salvas' : 'Configuração salva no dispositivo')}</Text>}
+        <TouchableOpacity style={styles.deleteButton} disabled={disabled} onPress={() => Alert.alert(t('Excluir configuração'), draft.name, [
+          { text: t('Cancelar'), style: 'cancel' },
+          { text: t('Excluir'), style: 'destructive', onPress: () => void run(async () => { await deleteConfig(activeConfigId); }) },
+        ])}><Icon name="Trash2" size={18} color={theme.colors.error} /><Text style={[styles.text, { color: theme.colors.error }]}>{t('Excluir configuração')}</Text></TouchableOpacity>
       </ScrollView>
+      <Modal visible={showModels} animationType="slide" onRequestClose={() => setShowModels(false)}>
+        <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+          <View style={styles.modalHeader}><Text style={[styles.heading, styles.flex]}>{t('Modelos do provedor')}</Text><TouchableOpacity accessibilityLabel={t('Fechar')} style={styles.iconButton} onPress={() => setShowModels(false)}><Icon name="X" size={24} color={theme.colors.textPrimary} /></TouchableOpacity></View>
+          <TextInput accessibilityLabel={t('Buscar modelo')} style={[styles.input, { marginHorizontal: 16 }]} placeholder={t('Buscar modelo')} placeholderTextColor={theme.colors.textSecondary} value={query} onChangeText={setQuery} autoCapitalize="none" />
+          <FlatList keyboardShouldPersistTaps="handled" data={models.filter(model => (model.id + ' ' + model.name).toLowerCase().includes(query.toLowerCase()))} keyExtractor={model => model.id}
+            ListEmptyComponent={<Text style={styles.status}>{t('Nenhum modelo disponível.')}</Text>}
+            renderItem={({ item }) => <TouchableOpacity style={styles.configRow} onPress={() => { change({ model: item.id }); setShowModels(false); }}>
+              <View style={styles.flex}><Text style={styles.text}>{item.name}</Text><Text style={styles.secondary}>{item.id}</Text></View>
+              {AIService.normalizeModel(draft) === item.id && <Icon name="Check" size={20} color={theme.colors.accentBlue} />}
+            </TouchableOpacity>} />
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
 
 const getStyles = (theme: AppTheme) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.bgPrimary,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: theme.colors.bgElevated,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.colors.border,
-  },
-  backButton: {
-    marginRight: 16,
-  },
-  title: {
-    fontSize: 18,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.uiBold,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  infoBox: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.accentBlue + '20',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: theme.colors.accentBlue + '40',
-  },
-  infoText: {
-    flex: 1,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.ui,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontFamily: theme.typography.uiBold,
-    color: theme.colors.textSecondary,
-    marginBottom: 8,
-    letterSpacing: 1,
-  },
-  smallActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.bgElevated,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  smallActionText: {
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.uiBold,
-    fontSize: 12,
-  },
-  configChip: {
-    width: 190,
-    padding: 12,
-    marginRight: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.bgElevated,
-  },
-  configChipActive: {
-    backgroundColor: theme.colors.textPrimary,
-    borderColor: theme.colors.textPrimary,
-  },
-  configChipName: {
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.uiBold,
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  configChipModel: {
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.mono,
-    fontSize: 10,
-  },
-  configChipTextActive: {
-    color: theme.colors.bgPrimary,
-  },
-  helperText: {
-    fontSize: 12,
-    fontFamily: theme.typography.ui,
-    color: theme.colors.textSecondary,
-    marginBottom: 12,
-  },
-  providerRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  providerBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 18,
-    paddingHorizontal: 10,
-    backgroundColor: theme.colors.bgElevated,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  providerBtnActive: {
-    backgroundColor: theme.colors.textPrimary,
-    borderColor: theme.colors.textPrimary,
-  },
-  providerText: {
-    marginLeft: 8,
-    fontSize: 13,
-    fontFamily: theme.typography.uiBold,
-    color: theme.colors.textPrimary,
-  },
-  providerTextActive: {
-    color: theme.colors.bgPrimary,
-  },
-  input: {
-    backgroundColor: theme.colors.bgElevated,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.mono,
-    fontSize: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    minHeight: 54,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  statusBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    backgroundColor: theme.colors.bgElevated,
-    borderRadius: 12,
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  statusText: {
-    marginLeft: 8,
-    fontSize: 14,
-    fontFamily: theme.typography.uiBold,
-    flex: 1,
-  },
-  testConnectionContainer: {
-    marginTop: 8,
-  },
-  testBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 12,
-  },
-  testBtnText: {
-    fontSize: 16,
-    fontFamily: theme.typography.uiBold,
-  },
-  deleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: theme.colors.error + '12',
-    borderWidth: 1,
-    borderColor: theme.colors.error + '30',
-  },
-  deleteBtnText: {
-    color: theme.colors.error,
-    fontFamily: theme.typography.uiBold,
-    fontSize: 13,
-  },
+  container: { flex: 1, backgroundColor: theme.colors.bgPrimary },
+  content: { padding: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  flex: { flex: 1, minWidth: 0 },
+  heading: { color: theme.colors.textPrimary, fontSize: 16, fontFamily: theme.typography.uiBold },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  configRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderBottomWidth: 1, borderColor: theme.colors.border, minHeight: 60 },
+  selected: { backgroundColor: theme.colors.accentBlue + '18', borderColor: theme.colors.accentBlue },
+  text: { color: theme.colors.textPrimary, fontSize: 14, fontFamily: theme.typography.ui, flexShrink: 1 },
+  secondary: { color: theme.colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  label: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 22, marginBottom: 8 },
+  input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, minHeight: 48, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.textPrimary, backgroundColor: theme.colors.bgElevated, fontSize: 14 },
+  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  providerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  provider: { minHeight: 44, flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6 },
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  listButton: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 20, marginBottom: 12 },
+  button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexGrow: 1, minHeight: 48, paddingHorizontal: 16, borderRadius: 6, backgroundColor: theme.colors.bgElevated },
+  primary: { backgroundColor: theme.colors.accentBlue },
+  buttonText: { color: '#FFFFFF', fontSize: 14, fontFamily: theme.typography.uiBold },
+  disabled: { opacity: 0.45 },
+  status: { padding: 16, fontSize: 14, lineHeight: 21, color: theme.colors.textSecondary },
+  deleteButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 24, minHeight: 48 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 56 },
 });

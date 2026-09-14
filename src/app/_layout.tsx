@@ -1,6 +1,6 @@
 import '../polyfills/globals';
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Modal, TextInput, PermissionsAndroid, NativeModules, Platform, BackHandler, StatusBar as NativeStatusBar } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Modal, TextInput, NativeModules, Platform, BackHandler, StatusBar as NativeStatusBar } from 'react-native';
 import { Drawer } from 'expo-router/drawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAppTheme, ThemeProvider } from '../contexts/ThemeContext';
@@ -210,33 +210,6 @@ function InnerLayout() {
   const insets = useSafeAreaInsets();
   const { t } = useLanguage();
 
-  useEffect(() => {
-    const startForegroundService = async () => {
-      if (Platform.OS === 'android') {
-        try {
-          if (Platform.Version >= 33) {
-            const granted = await PermissionsAndroid.request(
-              PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-              {
-                title: t('Permissão de Notificação'),
-                message: t('DevFlux precisa exibir uma notificação para manter o servidor web rodando em segundo plano.'),
-                buttonNeutral: t('Depois'),
-                buttonNegative: t('Cancelar'),
-                buttonPositive: t('OK'),
-              }
-            );
-            if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn(err);
-        }
-      }
-    };
-    startForegroundService();
-  }, []);
-
   // Android hardware back button handler
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -246,6 +219,14 @@ function InnerLayout() {
       if (isRoot) {
         return false; // Allow default behavior (exit app)
       }
+      
+      // Se estiver no editor, força a volta para a tela inicial para evitar 
+      // cair em arquivos/projetos anteriores que ficaram na pilha de navegação
+      if (pathname.startsWith('/editor/')) {
+        router.replace('/');
+        return true;
+      }
+
       if (router.canGoBack()) {
         router.back();
         return true; // Prevent default
@@ -363,8 +344,7 @@ function InnerLayout() {
         <Drawer.Screen name="github/gists" options={{ title: t('drawer.titles.gists', 'Meus Gists'), headerShown: true }} />
         <Drawer.Screen name="github/starred" options={{ title: t('drawer.titles.starred', 'Favoritos'), headerShown: true }} />
         <Drawer.Screen name="projetos" options={{ title: t('drawer.titles.projects', 'Projetos'), headerShown: true }} />
-        <Drawer.Screen name="editor" options={{ title: t('drawer.titles.editor', 'Editor'), headerShown: true }} />
-        <Drawer.Screen name="editor/configuracoes" options={{ title: t('drawer.titles.settings', 'Configurações Gerais'), headerShown: true }} />
+        <Drawer.Screen name="editor" options={{ title: pathname === '/editor/configuracoes' ? t('drawer.titles.settings', 'Configurações Gerais') : t('drawer.titles.editor', 'Editor') }} />
         <Drawer.Screen name="database/index" options={{ title: t('drawer.titles.database', 'Terminal SQL (DB)'), headerShown: true }} />
         <Drawer.Screen name="debug" options={{ title: t('drawer.titles.debug', 'Debug'), headerShown: false }} />
         <Drawer.Screen name="ai-panel" options={{ title: t('drawer.titles.aiPanel', 'Assistente (BYOK)'), headerShown: false }} />

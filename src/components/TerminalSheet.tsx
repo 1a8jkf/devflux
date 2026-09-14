@@ -1,20 +1,18 @@
-import React, { useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, Dimensions } from 'react-native';
+import React, { useRef, useState, useEffect, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, PanResponder, useWindowDimensions } from 'react-native';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { AppTheme } from '../theme';
 import { Icon } from './Icon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TerminalView, TerminalViewRef } from './TerminalView';
 
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const HANDLE_HEIGHT = 36;
-const MAX_HEIGHT = SCREEN_HEIGHT * 0.9;
-const MID_HEIGHT = SCREEN_HEIGHT * 0.5;
+import { terminalSheetHeights } from '../utils/terminalLayout';
 
 interface TerminalSheetProps {
   projectId: string;
   visible?: boolean;
   onOpenInTab?: () => void;
+  availableHeight?: number;
 }
 
 export interface TerminalSheetRef {
@@ -25,27 +23,29 @@ export interface TerminalSheetRef {
   reset: () => void;
 }
 
-export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId, visible = true, onOpenInTab }, ref) => {
+export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({ projectId, visible = true, onOpenInTab, availableHeight }, ref) => {
   const { theme } = useAppTheme();
   const styles = getStyles(theme);
   const insets = useSafeAreaInsets();
   
-  const MIN_HEIGHT = HANDLE_HEIGHT + insets.bottom;
+  const { height: windowHeight } = useWindowDimensions();
+  const [MIN_HEIGHT, MID_HEIGHT, MAX_HEIGHT] = terminalSheetHeights(availableHeight || windowHeight, insets.bottom);
 
   const heightAnim = useRef(new Animated.Value(MIN_HEIGHT)).current;
   const lastHeight = useRef(MIN_HEIGHT);
   const [isExpanded, setIsExpanded] = useState(false);
+  const snapIndex = useRef(0);
   const [terminalResetKey, setTerminalResetKey] = useState(0);
 
   useEffect(() => {
-    // If insets change dynamically, update height if collapsed
-    if (!isExpanded) {
-      heightAnim.setValue(MIN_HEIGHT);
-      lastHeight.current = MIN_HEIGHT;
-    }
-  }, [insets.bottom]);
+    const target = [MIN_HEIGHT, MID_HEIGHT, MAX_HEIGHT][snapIndex.current];
+    heightAnim.stopAnimation();
+    heightAnim.setValue(target);
+    lastHeight.current = target;
+  }, [MIN_HEIGHT, MID_HEIGHT, MAX_HEIGHT, heightAnim]);
 
-  const snapTo = (target: number) => {
+  const snapTo = useCallback((target: number) => {
+    snapIndex.current = target <= MIN_HEIGHT ? 0 : target >= MAX_HEIGHT ? 2 : 1;
     lastHeight.current = target;
     setIsExpanded(target > MIN_HEIGHT + 10);
     Animated.spring(heightAnim, {
@@ -54,7 +54,7 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
       friction: 10,
       tension: 60,
     }).start();
-  };
+  }, [MIN_HEIGHT, MAX_HEIGHT, heightAnim]);
 
   const terminalViewRef = useRef<TerminalViewRef>(null);
 
@@ -75,13 +75,12 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
     reset: resetTerminal
   }));
 
-  const panResponder = useRef(
+  const panResponder = useMemo(() =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 5,
       onPanResponderGrant: () => {
-        // @ts-ignore
-        lastHeight.current = heightAnim._value;
+        heightAnim.stopAnimation(value => { lastHeight.current = value; });
       },
       onPanResponderMove: (_, gs) => {
         let newHeight = lastHeight.current - gs.dy;
@@ -90,8 +89,7 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
         heightAnim.setValue(newHeight);
       },
       onPanResponderRelease: (_, gs) => {
-        // @ts-ignore
-        const current = heightAnim._value;
+        const current = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, lastHeight.current - gs.dy));
         const velocity = gs.vy;
 
         // Snap to nearest point based on position and velocity
@@ -106,7 +104,7 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
         }
       },
     })
-  ).current;
+  , [MIN_HEIGHT, MID_HEIGHT, MAX_HEIGHT, heightAnim, snapTo]);
 
   const toggleExpand = () => {
     if (isExpanded) {
@@ -149,6 +147,8 @@ export const TerminalSheet = forwardRef<TerminalSheetRef, TerminalSheetProps>(({
   );
 });
 
+TerminalSheet.displayName = 'TerminalSheet';
+
 const getStyles = (theme: AppTheme) => StyleSheet.create({
   container: {
     position: 'absolute',
@@ -180,6 +180,7 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
+    minHeight: 36,
     paddingVertical: 4,
     backgroundColor: '#000000',
   },

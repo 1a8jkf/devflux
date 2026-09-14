@@ -10,13 +10,13 @@ import { TerminalView } from '../../components/TerminalView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { EditorSidebar } from '../../components/EditorSidebar';
 import { Icon } from '../../components/Icon';
-import { useRouter, useNavigation, useLocalSearchParams } from 'expo-router';
+import { useRouter, useNavigation, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { useCommandPalette } from '../../contexts/CommandPaletteContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FileSystemService, FileNode, ProjectInfo } from '../../services/FileSystemService';
 import { WebView } from 'react-native-webview';
-import { Platform } from 'react-native';
+import { Platform, DeviceEventEmitter } from 'react-native';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useAISettings } from '../../contexts/AISettingsContext';
@@ -32,6 +32,8 @@ interface OpenTab {
   isDirty?: boolean;
   saveState?: 'saved' | 'dirty' | 'saving' | 'error';
 }
+
+const isTerminalTab = (tab?: OpenTab) => tab?.type === 'shell' && /^shell-\d+$/.test(tab.id);
 
 interface AssistantRailMessage {
   id: string;
@@ -231,17 +233,34 @@ export default function CodigoScreen() {
 
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activeTab, setActiveTabState] = useState('');
+  const tabsRef = useRef(tabs);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
   const activeTabRef = useRef('');
   const activeFileLoadSeqRef = useRef(0);
+  const initialOpenSeqRef = useRef(0);
   const previousProjectIdRef = useRef(projectId);
-  const [activeFileLoadState, setActiveFileLoadState] = useState<{ path: string; status: 'idle' | 'loading' | 'error'; message?: string }>({ path: '', status: 'idle' });
+  const [activeFileLoadState, setActiveFileLoadState] = useState<{ project?: string; path: string; status: 'idle' | 'loading' | 'error'; message?: string }>({ path: '', status: 'idle' });
 
   const setActiveTab = (tab: string) => {
+    if (activeTabRef.current !== tab) {
+      initialOpenSeqRef.current += 1;
+      DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+      (global as any).activeInputTarget = null;
+    }
     activeTabRef.current = tab;
     setActiveTabState(tab);
     ContextManager.setActiveProject(projectId);
     ContextManager.setActiveFile(tab);
   };
+
+  useFocusEffect(React.useCallback(() => {
+    ContextManager.setActiveProject(projectId);
+    ContextManager.setActiveFile(activeTabRef.current || null);
+    return () => {
+      DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+      (global as any).activeInputTarget = null;
+    };
+  }, [projectId]));
 
   const [code, setCode] = useState('');
   const codeRef = useRef('');
@@ -261,6 +280,66 @@ export default function CodigoScreen() {
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewUrl, setPreviewUrl] = useState('http://localhost:3000');
   const [urlInput, setUrlInput] = useState('localhost:3000');
+
+  // Browser multi-tab state
+  interface BrowserTab { id: string; url: string; title: string; }
+  const [browserTabs, setBrowserTabs] = useState<BrowserTab[]>([]);
+  const [activeBrowserTab, setActiveBrowserTab] = useState('');
+  const browserTabIdSeq = useRef(0);
+
+  // Load persisted browser tabs
+  useEffect(() => {
+    if (!projectId) return;
+    AsyncStorage.getItem(`devflux_browser_tabs_${projectId}`).then(data => {
+      if (!data) return;
+      try {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed.tabs) && parsed.tabs.length > 0) {
+          setBrowserTabs(parsed.tabs);
+          setActiveBrowserTab(parsed.active || parsed.tabs[0].id);
+          browserTabIdSeq.current = Math.max(0, ...parsed.tabs.map((t: BrowserTab) => parseInt(t.id.replace('btab-', ''), 10) || 0));
+        }
+      } catch(e) {}
+    });
+  }, [projectId]);
+
+  // Persist browser tabs on change
+  useEffect(() => {
+    if (!projectId || browserTabs.length === 0) return;
+    AsyncStorage.setItem(`devflux_browser_tabs_${projectId}`, JSON.stringify({ tabs: browserTabs, active: activeBrowserTab })).catch(() => {});
+  }, [browserTabs, activeBrowserTab, projectId]);
+
+  const addBrowserTab = (url: string, title?: string) => {
+    const id = `btab-${++browserTabIdSeq.current}`;
+    const displayTitle = title || url.replace(/^https?:\/\//, '').split('/')[0] || 'New tab';
+    setBrowserTabs(prev => [...prev, { id, url, title: displayTitle }]);
+    setActiveBrowserTab(id);
+    return id;
+  };
+
+  const closeBrowserTab = (id: string) => {
+    setBrowserTabs(prev => {
+      const next = prev.filter(t => t.id !== id);
+      if (activeBrowserTab === id) {
+        if (next.length > 0) {
+          const idx = Math.max(0, prev.findIndex(t => t.id === id) - 1);
+          setActiveBrowserTab(next[Math.min(idx, next.length - 1)].id);
+        } else {
+          setActiveBrowserTab('');
+          setIsPreview(false);
+          setPlayState('idle');
+        }
+      }
+      if (next.length === 0) {
+        AsyncStorage.removeItem(`devflux_browser_tabs_${projectId}`).catch(() => {});
+      }
+      return next;
+    });
+  };
+
+  const updateBrowserTabUrl = (id: string, url: string, title?: string) => {
+    setBrowserTabs(prev => prev.map(t => t.id === id ? { ...t, url, title: title || url.replace(/^https?:\/\//, '').split('/')[0] || t.title } : t));
+  };
   const [consoleLogs, setConsoleLogs] = useState<{type: string, text: string}[]>([]);
   const [networkLogs, setNetworkLogs] = useState<any[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -273,6 +352,7 @@ export default function CodigoScreen() {
 
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
+  const [availableHeight, setAvailableHeight] = useState(height);
   const isWorkbench = width >= 900 && width > height;
 
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
@@ -299,7 +379,7 @@ export default function CodigoScreen() {
     content: t('assistantRail.welcome', 'Pergunte algo sobre o projeto atual. Eu preparo a mensagem para o chat da IA no tablet.')
   }]);
   useEffect(() => {
-    if (projectId && tabs.length > 0) {
+    if (projectId && previousProjectIdRef.current === projectId && tabs.length > 0) {
       AsyncStorage.setItem(`devflux_tabs_${projectId}`, JSON.stringify({ tabs, activeTab })).catch(e => console.log(e));
     }
   }, [tabs, activeTab, projectId]);
@@ -424,10 +504,13 @@ export default function CodigoScreen() {
     }, 900);
   };
 
-  const handleEditorCodeChange = (nextCode: string) => {
+  const handleEditorCodeChange = (nextCode: string, sourcePath = activeTab, sourceProject = projectId) => {
+    if (sourcePath !== activeTabRef.current || sourceProject !== previousProjectIdRef.current) return;
     const targetPath = activeTabRef.current;
     codeRef.current = nextCode;
-    setCode(nextCode);
+    // Only trigger re-render if code actually changed — avoids echoing
+    // the same value back through useEffect[code] in the editor component
+    if (nextCode !== code) setCode(nextCode);
 
     if (!targetPath) return;
     const savedContent = savedContentRef.current[targetPath] ?? originalCode;
@@ -482,27 +565,14 @@ export default function CodigoScreen() {
     const showSub = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
     const hideSub = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
 
-    const { DeviceEventEmitter } = require('react-native');
     const toolbarSub = DeviceEventEmitter.addListener('KEYBOARD_TOOLBAR_ACTION', (action: any) => {
       const currentTarget = (global as any).activeInputTarget;
       const actionTarget = action?.target;
-      if ((actionTarget && actionTarget !== 'editor') || (!actionTarget && currentTarget !== 'editor')) return;
-      if (!editorRef.current?.handleToolbarAction || action.actionType !== 'keypress') return;
-
-      const { key, ctrlKey } = action.meta;
-      if (ctrlKey && key === 's') {
-        const targetPath = activeTabRef.current;
-        if (projectId && targetPath) {
-          saveFileContent(projectId, targetPath, codeRef.current, isLiveSync)
-            .finally(() => DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId: action.requestId, target: 'editor' }));
-        } else {
-          DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId: action.requestId, target: 'editor' });
-        }
-        return;
-      }
-
-      editorRef.current.handleToolbarAction('keypress', action.meta);
-      DeviceEventEmitter.emit('KEYBOARD_TOOLBAR_ACTION_COMPLETE', { requestId: action.requestId, target: 'editor' });
+      const resetModifiers = action.actionType === 'modifier' && !action.meta?.ctrlKey && !action.meta?.shiftKey && !action.meta?.altKey;
+      if (actionTarget !== 'editor' || (!navigation.isFocused() && !resetModifiers)) return;
+      if (action.actionType !== 'modifier' && currentTarget !== 'editor') return;
+      if (!editorRef.current?.handleToolbarAction || isTerminalTab(tabsRef.current.find(tab => tab.id === activeTabRef.current))) return;
+      editorRef.current.handleToolbarAction(action.actionType, { ...action.meta, requestId: action.requestId });
     });
 
     return () => {
@@ -510,50 +580,26 @@ export default function CodigoScreen() {
       hideSub.remove();
       toolbarSub.remove();
     };
-  }, [projectId, isLiveSync]);
+  }, [projectId, isLiveSync, navigation]);
 
   useEffect(() => {
     if (projectId) {
+      let cancelled = false;
       FileSystemService.getProjects().then(projs => {
+        if (cancelled) return;
         const p = projs.find(p => p.id === projectId);
-        if (p) setProjectInfo(p as ProjectInfo);
+        setProjectInfo(p || null);
       });
+      return () => { cancelled = true; };
     }
   }, [projectId]);
 
   useEffect(() => {
-    if (params.isNewProject === 'true') {
-      setTimeout(() => {
-        terminalSheetRef.current?.snapToIndex(1);
-        const type = params.templateType as string;
-        const selectedDeps = String(params.deps || '')
-          .split(',')
-          .map(dep => dep.trim())
-          .filter(dep => /^[a-zA-Z0-9._@/-]+$/.test(dep));
-        const installSelectedDeps = selectedDeps.length > 0 ? ` && npm install ${selectedDeps.join(' ')}` : '';
-        const shellEnv = 'export HOME=/root NPM_CONFIG_PREFIX=/root/.npm-global npm_config_prefix=/root/.npm-global PATH=/root/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-        const ensureNodeNpm = `${shellEnv}; if ! command -v npm >/dev/null 2>&1; then apk update --no-cache && apk add --no-cache nodejs npm; fi; hash -r`;
-        if (type === 'react') {
-          terminalSheetRef.current?.runCommand(`${ensureNodeNpm}; npm exec --yes create-vite@latest -- . --template react && npm install${installSelectedDeps}`);
-        } else if (type === 'node') {
-          const nodeDeps = Array.from(new Set(['express', 'dotenv', 'cors', 'mongoose', ...selectedDeps])).join(' ');
-          terminalSheetRef.current?.runCommand(`${ensureNodeNpm}; npm init -y && npm install ${nodeDeps}`);
-        }
-      }, 1000);
+    if (params.isNewProject === 'true' && params.templateType === 'blank') {
+      terminalSheetRef.current?.expand();
     }
   }, [params.isNewProject, params.templateType]);
 
-  useEffect(() => {
-    const parent = navigation.getParent();
-    if (parent) {
-      parent.setOptions({ headerShown: false });
-    }
-    return () => {
-      if (parent) {
-        parent.setOptions({ headerShown: true });
-      }
-    };
-  }, [navigation]);
 
   // Handle goToLine from search results
   useEffect(() => {
@@ -568,103 +614,69 @@ export default function CodigoScreen() {
     }
   }, [goToLineParam, activeTab]);
 
-  // Load initial files or open new file from params
+  // Project reset and tab restoration share one cancellable opening transaction.
   useEffect(() => {
     if (!projectId) return;
-
+    const changedProject = previousProjectIdRef.current !== projectId;
+    if (changedProject) {
+      previousProjectIdRef.current = projectId;
+      activeFileLoadSeqRef.current += 1;
+      Object.values(autoSaveTimersRef.current).forEach(clearTimeout);
+      autoSaveTimersRef.current = {};
+      setTabs([]);
+      setActiveTab('');
+      unsavedContentRef.current = {};
+      savedContentRef.current = {};
+      applyDirtyFileIds(new Set());
+      setEditorChangeStatsByPath({});
+      codeRef.current = '';
+      setCode('');
+      setOriginalCode('');
+      setProjectFilePaths([]);
+      setActiveFileLoadState({ path: '', status: 'idle' });
+    }
+    let cancelled = false;
+    const sequence = ++initialOpenSeqRef.current;
+    const current = () => !cancelled && initialOpenSeqRef.current === sequence;
+    const selectFile = (path: string) => {
+      const name = path.split('/').pop() || path;
+      setTabs(previous => previous.some(tab => tab.id === path) ? previous : [...previous, { id: path, name, type: name.split('.').pop() || 'txt' }]);
+      setActiveTab(path);
+    };
     if (openFilePath) {
-      const fileName = openFilePath.split('/').pop() || openFilePath;
-      const extension = fileName.split('.').pop()?.toLowerCase() || 'txt';
-
-      let type: string = extension;
-
-      const openInitial = async () => {
-        setTabs(prev => {
-          if (!prev.find(t => t.id === openFilePath)) {
-            return [...prev, { id: openFilePath, name: fileName, type }];
-          }
-          return prev;
-        });
-
-        // Force request if LiveSync is active
-        if (isLiveSync) {
-          import('../../services/LiveSyncService').then(({ LiveSyncService }) => {
-            if (LiveSyncService.ws && LiveSyncService.ws.readyState === 1) {
-              LiveSyncService.requestRemoteFile(openFilePath);
-            }
-          });
-        }
-
-        setActiveTab(openFilePath);
-      };
-      openInitial();
-    } else if (tabs.length === 0) {
-      const openInitial = async () => {
+      selectFile(openFilePath);
+    } else if (changedProject || tabs.length === 0) {
+      void (async () => {
         try {
-          const savedData = await AsyncStorage.getItem(`devflux_tabs_${projectId}`);
+          const tree = await FileSystemService.getProjectFileTree(projectId, { deferDirectories: ['node_modules', '.git'] });
+          const paths = flattenProjectFilePaths(tree);
+          const savedData = await AsyncStorage.getItem('devflux_tabs_' + projectId);
+          if (!current()) return;
           if (savedData) {
-            const { tabs: savedTabs, activeTab: savedActive } = JSON.parse(savedData);
-            if (savedTabs && savedTabs.length > 0) {
-              setTabs(savedTabs);
-              setActiveTab(savedActive || savedTabs[0].id);
+            const saved = JSON.parse(savedData);
+            const validTabs: OpenTab[] = [];
+            for (const tab of Array.isArray(saved.tabs) ? saved.tabs : []) {
+              if (!tab || typeof tab.id !== 'string') continue;
+              if (isTerminalTab(tab) || paths.includes(tab.id) || await FileSystemService.pathExists(projectId, tab.id)) {
+                validTabs.push(tab);
+              }
+            }
+            if (!current()) return;
+            if (validTabs.length) {
+              setTabs(validTabs);
+              setActiveTab(validTabs.some(tab => tab.id === saved.activeTab) ? saved.activeTab : validTabs[0].id);
               return;
             }
           }
-        } catch(e) {}
-        try {
-          const tree = await FileSystemService.getProjectFileTree(projectId);
-          const getFirstFile = (nodes: FileNode[]): FileNode | null => {
-            for (const node of nodes) {
-              if (node.type === 'file') {
-                return node;
-              } else if (node.children) {
-                const found = getFirstFile(node.children);
-                if (found) return found;
-              }
-            }
-            return null;
-          };
-
-          const firstFile = getFirstFile(tree);
-
-          if (firstFile) {
-            const fileName = firstFile.name;
-            const extension = fileName.split('.').pop()?.toLowerCase() || 'txt';
-            let type: string = extension;
-            setTabs([{ id: firstFile.path, name: fileName, type }]);
-            setActiveTab(firstFile.path);
-          }
-        } catch(e) {
-          console.error("Failed to load initial file", e);
+          const preferred = ['src/App.jsx', 'server.js', 'index.html'].find(path => paths.includes(path)) || paths[0];
+          if (preferred) selectFile(preferred);
+        } catch (error) {
+          if (current()) DebugService.log('file', 'error', 'Falha ao restaurar arquivos do projeto.', { project: projectId, error: String(error) });
         }
-      };
-      openInitial();
+      })();
     }
-  }, [projectId, openFilePath, isLiveSync]);
-
-  // Reset state only when switching between projects. On first mount this must not race
-  // with the initial open-file effect and clear the freshly selected tab.
-  useEffect(() => {
-    if (!projectId) return;
-    if (!previousProjectIdRef.current) {
-      previousProjectIdRef.current = projectId;
-      return;
-    }
-    if (previousProjectIdRef.current === projectId) return;
-    previousProjectIdRef.current = projectId;
-    activeFileLoadSeqRef.current += 1;
-    setTabs([]);
-    setActiveTab('');
-    codeRef.current = '';
-    unsavedContentRef.current = {};
-    savedContentRef.current = {};
-    applyDirtyFileIds(new Set());
-    setEditorChangeStatsByPath({});
-    setCode('');
-    setOriginalCode('');
-    setProjectFilePaths([]);
-    setActiveFileLoadState({ path: '', status: 'idle' });
-  }, [projectId]);
+    return () => { cancelled = true; };
+  }, [projectId, openFilePath, params.t]);
 
   useEffect(() => {
     if (!projectId) {
@@ -691,7 +703,7 @@ export default function CodigoScreen() {
           if (LiveSyncService.remoteTree.length > 0) return;
         }
 
-        const tree = await FileSystemService.getProjectFileTree(projectId);
+        const tree = await FileSystemService.getProjectFileTree(projectId, { deferDirectories: ['node_modules', '.git'] });
         if (isMounted) setProjectFilePaths(flattenProjectFilePaths(tree || []));
       } catch (e) {
         if (isMounted) setProjectFilePaths([]);
@@ -717,7 +729,7 @@ export default function CodigoScreen() {
   // Load active tab content
   useEffect(() => {
     if (!projectId || !activeTab) return;
-    if (activeTab.startsWith('shell')) {
+    if (isTerminalTab(tabsRef.current.find(tab => tab.id === activeTab))) {
       setActiveFileLoadState({ path: activeTab, status: 'idle' });
       return;
     }
@@ -733,14 +745,14 @@ export default function CodigoScreen() {
       codeRef.current = draftContent;
       setCode(draftContent);
       setOriginalCode(savedContent);
-      setActiveFileLoadState({ path: targetPath, status: 'idle' });
+      setActiveFileLoadState({ project: projectId, path: targetPath, status: 'idle' });
       const draftIsDirty = draftContent !== savedContent;
       setFileDirty(targetPath, draftIsDirty);
       if (draftIsDirty) setEditorChangeStatsForFile(targetPath, savedContent, draftContent);
       else clearEditorChangeStatsForFile(targetPath);
     } else {
       const startedAt = Date.now();
-      setActiveFileLoadState({ path: targetPath, status: 'loading' });
+      setActiveFileLoadState({ project: projectId, path: targetPath, status: 'loading' });
       DebugService.log('file', 'info', 'Abrindo arquivo no editor.', { project: projectId, file: targetPath });
 
       FileSystemService.readFile(projectId, targetPath)
@@ -751,14 +763,14 @@ export default function CodigoScreen() {
           codeRef.current = content;
           setCode(content);
           setOriginalCode(content);
-          setActiveFileLoadState({ path: targetPath, status: 'idle' });
+          setActiveFileLoadState({ project: projectId, path: targetPath, status: 'idle' });
           setFileDirty(targetPath, false);
           clearEditorChangeStatsForFile(targetPath);
           DebugService.log('file', 'info', 'Arquivo carregado no editor.', { project: projectId, file: targetPath, durationMs: Date.now() - startedAt, bytes: content.length });
         })
         .catch(err => {
           if (!isMounted || requestSeq !== activeFileLoadSeqRef.current || activeTabRef.current !== targetPath) return;
-          setActiveFileLoadState({ path: targetPath, status: 'error', message: err?.message || String(err) });
+          setActiveFileLoadState({ project: projectId, path: targetPath, status: 'error', message: err?.message || String(err) });
           DebugService.log('file', 'error', 'Arquivo não carregou no editor.', { project: projectId, file: targetPath, durationMs: Date.now() - startedAt, error: err?.message || String(err) });
         });
     }
@@ -774,13 +786,14 @@ export default function CodigoScreen() {
     return () => {
       isMounted = false;
     };
-  }, [projectId, activeTab, isLiveSync]);
+  }, [projectId, activeTab, isLiveSync, params.t]);
 
   // Listen for remote file content globally
   useEffect(() => {
     let isMounted = true;
     let unsubscribe: () => void;
     import('../../services/LiveSyncService').then(({ LiveSyncService }) => {
+      if (!isMounted) return;
       const oldHandler = LiveSyncService.onRemoteFileContent;
       LiveSyncService.onRemoteFileContent = (path: string, content: string, remoteProjectId: string) => {
         if (isMounted && remoteProjectId === projectId) {
@@ -794,12 +807,13 @@ export default function CodigoScreen() {
           if (path === activeTabRef.current) {
             setOriginalCode(content);
             if (!hasLocalDraft) {
+              activeFileLoadSeqRef.current += 1;
               delete unsavedContentRef.current[path];
               if (codeRef.current !== content) {
                 codeRef.current = content;
                 setCode(content);
               }
-              setActiveFileLoadState({ path, status: 'idle' });
+              setActiveFileLoadState({ project: projectId, path, status: 'idle' });
               DebugService.log('liveSync', 'info', 'Conteúdo remoto aplicado no editor.', { project: remoteProjectId, file: path, bytes: content.length });
               setFileDirty(path, false);
               clearEditorChangeStatsForFile(path);
@@ -948,8 +962,6 @@ export default function CodigoScreen() {
     DebugService.log('browser', 'info', 'Iniciando preview...', { project: projectId, file: activeTabRef.current });
     const selectedPath = activeTabRef.current || activeTab;
     try {
-      // Simula um pequeno loading para testar a UI
-      await new Promise(r => setTimeout(r, 600));
       const html = await buildPreviewHtmlForFile(projectId, selectedPath, code);
       // Use the actual native file path for baseUrl so relative scripts/css load properly in Android WebView
       let baseUrl = FileSystemService.getProjectPath(projectId);
@@ -967,16 +979,37 @@ export default function CodigoScreen() {
       setPreviewHtml(`<!doctype html><html><body><h1>Error loading preview</h1><p>${e?.message || ''}</p></body></html>`);
       setPlayState('error');
       DebugService.log('browser', 'error', `Falha ao carregar preview: ${e?.message}`, { project: projectId, file: selectedPath });
-      setTimeout(() => setPlayState('idle'), 3000);
       return;
     }
 
     setConsoleLogs([]);
     setNetworkLogs([]);
     setIsConsoleOpen(false);
+    // Open preview in a browser tab
+    const tabTitle = normalizeProjectEditorPath(selectedPath) || 'Preview';
+    const existingPreview = browserTabs.find(t => t.title === tabTitle);
+    // baseUrl is defined in try block, but we setPreviewUrl with it. 
+    // We can just use previewUrl which will be updated in next render, or construct a temporary one.
+    // Better yet, just use a dummy URL or previewUrl since previewWebView will load HTML content.
+    let tabUrl = 'http://localhost:3000';
+    let fileBaseUrl = FileSystemService.getProjectPath(projectId);
+    if (fileBaseUrl) {
+      tabUrl = fileBaseUrl;
+      if (!tabUrl.endsWith('/')) tabUrl += '/';
+    }
+    
+    if (existingPreview) {
+      setActiveBrowserTab(existingPreview.id);
+      updateBrowserTabUrl(existingPreview.id, tabUrl, tabTitle);
+    } else {
+      addBrowserTab(tabUrl, tabTitle);
+    }
     setIsPreview(true);
     setPlayState('running');
-    DebugService.log('browser', 'info', 'Preview renderizado com sucesso.', { project: projectId, file: selectedPath });
+    // Hide keyboard toolbar in browser mode — shortcuts don't apply there
+    DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR');
+    (global as any).activeInputTarget = null;
+    DebugService.log('browser', 'info', 'Conteudo do preview preparado.', { project: projectId, file: selectedPath });
   };
 
   const activeTabDetails = tabs.find(t => t.id === activeTab);
@@ -997,9 +1030,9 @@ const handleOpenShellInTab = () => {
   };
 
   const renderEditor = (workbench = false) => (
-      <View style={[{ flex: 1 }, workbench && styles.workbenchEditorPane]}>
+      <View style={[{ flex: 1, minWidth: 0, width: '100%' }, workbench && styles.workbenchEditorPane]}>
         <>
-          <View style={[styles.editorHeader, workbench && styles.workbenchEditorHeader, { paddingTop: workbench ? 0 : insets.top, height: (workbench ? 42 : 44) + (workbench ? 0 : insets.top) }]}>
+          <View style={[styles.editorHeader, workbench && styles.workbenchEditorHeader, { paddingLeft: workbench ? 8 : Math.max(8, insets.left), paddingRight: workbench ? 12 : Math.max(12, insets.right), paddingTop: workbench ? 0 : insets.top, height: (workbench ? 42 : 44) + (workbench ? 0 : insets.top) }]}>
             <TouchableOpacity
               style={styles.menuBtn}
               onPress={() => workbench ? router.replace('/') : openEditorDrawer()}
@@ -1017,6 +1050,13 @@ const handleOpenShellInTab = () => {
             )}
 
             <View style={styles.headerActions}>
+              <ScrollView
+                horizontal
+                style={styles.headerActionScroll}
+                contentContainerStyle={styles.headerActionContent}
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="always"
+              >
               <TouchableOpacity style={styles.actionBtn} onPress={() => editorRef.current?.undo()}>
                 <Icon name="Undo" size={18} color={theme.colors.textPrimary} />
               </TouchableOpacity>
@@ -1041,6 +1081,7 @@ const handleOpenShellInTab = () => {
               <TouchableOpacity style={styles.actionBtn} onPress={() => workbench ? setIsAssistantOpen(open => !open) : router.push({ pathname: '/ai-panel', params: { projectId } })}>
                 <Icon name="Sparkles" size={18} color={isAssistantOpen ? theme.colors.accentPurple : theme.colors.textSecondary} outline={false} />
               </TouchableOpacity>
+              </ScrollView>
               <BrowserPlayButton 
                 state={playState} 
                 onPress={handlePlay} 
@@ -1056,9 +1097,9 @@ const handleOpenShellInTab = () => {
             onTabClose={handleTabClose}
           />
           {activeTab ? (
-            activeTab.startsWith('shell') ? (
+            isTerminalTab(activeTabDetails) ? (
               <TerminalView projectId={projectId} sessionId={activeTab} />
-            ) : activeFileLoadState.path !== activeTab || activeFileLoadState.status === 'loading' ? (
+            ) : activeFileLoadState.project !== projectId || activeFileLoadState.path !== activeTab || activeFileLoadState.status === 'loading' ? (
               <View style={styles.emptyEditor}>
                 <ActivityIndicator size="large" color={theme.colors.accentBlue} />
                 <Text style={styles.emptyEditorText}>{t('Carregando arquivo...')}</Text>
@@ -1071,13 +1112,14 @@ const handleOpenShellInTab = () => {
               </View>
             ) : (
               <CodeEditor
-                key={activeTab}
+                key={projectId + ':' + activeTab}
                 ref={editorRef}
                 filePath={activeTab}
                 filePaths={projectFilePaths}
                 code={code}
                 language={activeTabDetails?.type || 'js'}
-                onChangeCode={handleEditorCodeChange}
+                onChangeCode={content => handleEditorCodeChange(content, activeTab, projectId)}
+                onSaveCode={content => saveFileContent(projectId, activeTab, content, isLiveSync)}
               />
             )
           ) : (
@@ -1116,8 +1158,27 @@ const handleOpenShellInTab = () => {
 
   const renderPreview = (workbench = false) => (
       <View style={[styles.previewContainer, { flex: 1 }]}>
-          <View style={[styles.browserBar, workbench && styles.workbenchEditorHeader, { paddingTop: workbench ? 0 : insets.top, height: (workbench ? 42 : 44) + (workbench ? 0 : insets.top) }]}>
-            <TouchableOpacity onPress={() => { setIsPreview(false); setIsConsoleOpen(false); setPlayState('idle'); }} style={styles.previewIconBtn}>
+          {/* Browser tab bar */}
+          {browserTabs.length > 0 && (
+            <View style={{ flexDirection: 'row', backgroundColor: theme.colors.bgElevated, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border, paddingTop: workbench ? 0 : insets.top }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'flex-end', paddingHorizontal: 4 }}>
+                {browserTabs.map(bt => (
+                  <TouchableOpacity key={bt.id} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, marginRight: 2, borderTopLeftRadius: 8, borderTopRightRadius: 8, backgroundColor: bt.id === activeBrowserTab ? theme.colors.bgSurface : 'transparent', maxWidth: 180 }} onPress={() => { setActiveBrowserTab(bt.id); setPreviewUrl(bt.url); setUrlInput(bt.url.replace(/^https?:\/\//, '')); }}>
+                    <Icon name="Globe" size={12} color={bt.id === activeBrowserTab ? theme.colors.accentBlue : theme.colors.textSecondary} style={{ marginRight: 6 }} />
+                    <Text numberOfLines={1} style={{ fontFamily: theme.typography.mono, fontSize: 11, color: bt.id === activeBrowserTab ? theme.colors.textPrimary : theme.colors.textSecondary, flex: 1 }}>{bt.title}</Text>
+                    <TouchableOpacity onPress={() => closeBrowserTab(bt.id)} style={{ padding: 2, marginLeft: 6 }}>
+                      <Icon name="X" size={12} color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity onPress={() => { const url = 'https://www.google.com'; addBrowserTab(url, 'Google'); setPreviewUrl(url); setPreviewHtml(''); setUrlInput('google.com'); }} style={{ padding: 10, alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="Plus" size={16} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          )}
+          <View style={[styles.browserBar, workbench && styles.workbenchEditorHeader, { paddingTop: browserTabs.length > 0 ? 0 : (workbench ? 0 : insets.top), height: (workbench ? 42 : 44) + (browserTabs.length > 0 ? 0 : (workbench ? 0 : insets.top)) }]}>
+            <TouchableOpacity onPress={() => { setIsPreview(false); setIsConsoleOpen(false); setPlayState('idle'); DeviceEventEmitter.emit('HIDE_KEYBOARD_TOOLBAR'); (global as any).activeInputTarget = null; }} style={styles.previewIconBtn}>
               <Icon name="X" size={20} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
@@ -1162,7 +1223,9 @@ const handleOpenShellInTab = () => {
                     finalUrl = 'https://www.google.com/search?q=' + encodeURIComponent(finalUrl);
                   }
                   setPreviewUrl(finalUrl);
+                  setPreviewHtml('');
                   setUrlInput(finalUrl.replace(/^https?:\/\//, ''));
+                  if (activeBrowserTab) updateBrowserTabUrl(activeBrowserTab, finalUrl);
                 }}
               />
             </View>
@@ -1195,6 +1258,11 @@ const handleOpenShellInTab = () => {
                   if (navState.url && navState.url !== 'about:blank' && !navState.url.startsWith('file://')) {
                     setPreviewUrl(navState.url);
                     setUrlInput(navState.url.replace(/^https?:\/\//, ''));
+                    // Update the active browser tab URL
+                    if (activeBrowserTab) {
+                      const title = navState.title || navState.url.replace(/^https?:\/\//, '').split('/')[0];
+                      updateBrowserTabUrl(activeBrowserTab, navState.url, title);
+                    }
                   }
                 }}
                 injectedJavaScript={`
@@ -1468,7 +1536,7 @@ const handleOpenShellInTab = () => {
 
   if (isWorkbench) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: Platform.OS === 'ios' ? insets.bottom : 0 }]}>
+      <View onLayout={event => setAvailableHeight(event.nativeEvent.layout.height)} style={[styles.container, { paddingTop: insets.top, paddingBottom: Platform.OS === 'ios' ? insets.bottom : 0 }]}>
         <View style={styles.workbenchShell}>
           <View style={[styles.workbenchSidebar, { width: filePanelWidth }]}>
             <EditorSidebar embedded onClose={() => {}} />
@@ -1493,9 +1561,10 @@ const handleOpenShellInTab = () => {
           )}
         </View>
         <TerminalSheet
+          availableHeight={availableHeight - insets.top}
           ref={terminalSheetRef}
           projectId={projectId}
-          visible={!isPreview}
+          visible={!isPreview && !isTerminalTab(activeTabDetails)}
           onOpenInTab={handleOpenShellInTab}
         />
       </View>
@@ -1504,15 +1573,17 @@ const handleOpenShellInTab = () => {
 
   return (
     <KeyboardAvoidingView
+      onLayout={event => setAvailableHeight(event.nativeEvent.layout.height)}
       style={[styles.container, { paddingBottom: Platform.OS === 'ios' ? insets.bottom : 0 }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {isPreview ? renderPreview() : renderEditor()}
 
       <TerminalSheet
+        availableHeight={availableHeight - insets.top}
         ref={terminalSheetRef}
         projectId={projectId}
-        visible={!isPreview}
+        visible={!isPreview && !isTerminalTab(activeTabDetails)}
         onOpenInTab={handleOpenShellInTab}
       />
       {Platform.OS !== 'ios' && <View style={{ height: isKeyboardVisible ? 0 : insets.bottom, backgroundColor: theme.colors.bgElevated }} />}
@@ -1590,7 +1661,8 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingLeft: 8,
-    paddingRight: 0,
+    paddingRight: 12,
+    minWidth: 0,
     backgroundColor: theme.colors.bgElevated,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border,
@@ -1600,6 +1672,7 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
   },
   menuBtn: {
     padding: 8,
+    flexShrink: 0,
   },
   workbenchHeaderTitle: {
     flex: 1,
@@ -1620,12 +1693,24 @@ const getStyles = (theme: AppTheme) => StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 12,
+    flexShrink: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  headerActionScroll: {
+    width: 236,
+    flexGrow: 0,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  headerActionContent: {
+    alignItems: 'center',
     gap: 4,
   },
   actionBtn: {
     width: 36,
     height: 36,
+    flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,

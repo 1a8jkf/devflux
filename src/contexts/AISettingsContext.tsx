@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type AIProvider = 'openai' | 'openrouter' | 'google';
@@ -37,13 +37,7 @@ const defaultSettings: AISettings = {
   name: 'OpenRouter',
   provider: 'openrouter',
   apiKey: '',
-  model: 'anthropic/claude-3.5-sonnet',
-};
-
-const defaultModelForProvider = (provider: AIProvider) => {
-  if (provider === 'google') return 'gemini-1.5-pro';
-  if (provider === 'openai') return 'gpt-4o';
-  return 'anthropic/claude-3.5-sonnet';
+  model: '',
 };
 
 const providerLabel = (provider: AIProvider) => {
@@ -60,7 +54,7 @@ const createProviderConfig = (seed: Partial<AISettings> = {}, index = 1): AIProv
     name: (seed.name || `${providerLabel(provider)} ${index}`).trim(),
     provider,
     apiKey: seed.apiKey || '',
-    model: seed.model || defaultModelForProvider(provider),
+    model: seed.model || '',
     createdAt: now,
     updatedAt: now,
   };
@@ -86,7 +80,7 @@ const normalizeLoadedConfig = (config: any, index: number): AIProviderConfig | n
     name: String(config.name || `${providerLabel(provider)} ${index + 1}`).trim(),
     provider,
     apiKey: String(config.apiKey || ''),
-    model: String(config.model || defaultModelForProvider(provider)),
+    model: String(config.model || ''),
     createdAt: Number(config.createdAt || Date.now()),
     updatedAt: Number(config.updatedAt || Date.now()),
   };
@@ -112,16 +106,23 @@ export const AISettingsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [activeConfigId, setActiveConfigId] = useState(fallbackConfig.id);
   const [isLoading, setIsLoading] = useState(true);
 
-  const persistState = async (nextConfigs: AIProviderConfig[], nextActiveConfigId: string) => {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
-      activeConfigId: nextActiveConfigId,
-      configs: nextConfigs,
-    }));
+  const stateRef = useRef({ configs: [fallbackConfig], activeConfigId: fallbackConfig.id });
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
 
-    const active = nextConfigs.find(config => config.id === nextActiveConfigId) || nextConfigs[0];
-    if (active) {
-      await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(configToSettings(active)));
-    }
+  const persistState = async (nextConfigs: AIProviderConfig[], nextActiveConfigId: string) => {
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ configs: nextConfigs, activeConfigId: nextActiveConfigId }));
+  };
+
+  const commit = (update: (state: typeof stateRef.current) => typeof stateRef.current) => {
+    const operation = writeQueue.current.catch(() => {}).then(async () => {
+      const next = update(stateRef.current);
+      await persistState(next.configs, next.activeConfigId);
+      stateRef.current = next;
+      setConfigs(next.configs);
+      setActiveConfigId(next.activeConfigId);
+    });
+    writeQueue.current = operation;
+    return operation;
   };
 
   useEffect(() => {
@@ -138,6 +139,7 @@ export const AISettingsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const loadedActiveId = loadedConfigs.some(config => config.id === parsed.activeConfigId)
               ? String(parsed.activeConfigId)
               : loadedConfigs[0].id;
+            stateRef.current = { configs: loadedConfigs, activeConfigId: loadedActiveId };
             setConfigs(loadedConfigs);
             setActiveConfigId(loadedActiveId);
             return;
@@ -147,6 +149,7 @@ export const AISettingsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const legacy = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
         if (legacy) {
           const migrated = createProviderConfig(JSON.parse(legacy), 1);
+          stateRef.current = { configs: [migrated], activeConfigId: migrated.id };
           setConfigs([migrated]);
           setActiveConfigId(migrated.id);
           await persistState([migrated], migrated.id);
@@ -171,62 +174,45 @@ export const AISettingsProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [configs, activeConfigId]);
 
   const updateSettings = async (newSettings: Partial<AISettings>) => {
-    const now = Date.now();
-    const targetId = activeConfig?.id || activeConfigId;
-    const nextConfigs = configs.map(config => {
-      if (config.id !== targetId) return config;
-      const provider = newSettings.provider || config.provider;
-      const model = newSettings.provider && newSettings.model === undefined
-        ? defaultModelForProvider(provider)
-        : newSettings.model ?? config.model;
-      return {
-        ...config,
-        ...newSettings,
-        provider,
-        model,
-        name: (newSettings.name ?? config.name).trim() || providerLabel(provider),
-        updatedAt: now,
-      };
-    });
-
-    setConfigs(nextConfigs);
-    setActiveConfigId(targetId);
-    await persistState(nextConfigs, targetId);
+    const targetId = newSettings.id || stateRef.current.activeConfigId;
+    await commit(state => ({
+      ...state,
+      configs: state.configs.map(config => {
+        if (config.id !== targetId) return config;
+        const provider = newSettings.provider || config.provider;
+        const changedProvider = provider !== config.provider;
+        return {
+          ...config,
+          name: (newSettings.name ?? config.name).trim() || providerLabel(provider),
+          provider,
+          apiKey: (newSettings.apiKey ?? (changedProvider ? '' : config.apiKey)).trim(),
+          model: (newSettings.model ?? (changedProvider ? '' : config.model)).trim(),
+          updatedAt: Date.now(),
+        };
+      }),
+    }));
   };
 
   const createConfig = async (seed: Partial<AISettings> = {}) => {
-    const nextConfig = createProviderConfig(seed, configs.length + 1);
-    const nextConfigs = [...configs, nextConfig];
-    setConfigs(nextConfigs);
-    setActiveConfigId(nextConfig.id);
-    await persistState(nextConfigs, nextConfig.id);
+    const nextConfig = createProviderConfig(seed, stateRef.current.configs.length + 1);
+    await commit(state => ({ configs: [...state.configs, nextConfig], activeConfigId: nextConfig.id }));
     return nextConfig.id;
   };
 
   const selectConfig = async (configId: string) => {
-    if (!configs.some(config => config.id === configId)) return;
-    setActiveConfigId(configId);
-    await persistState(configs, configId);
+    await commit(state => state.configs.some(config => config.id === configId) ? { ...state, activeConfigId: configId } : state);
   };
 
   const deleteConfig = async (configId: string) => {
-    if (configs.length <= 1) {
-      const reset = createProviderConfig(defaultSettings, 1);
-      setConfigs([reset]);
-      setActiveConfigId(reset.id);
-      await persistState([reset], reset.id);
-      return;
-    }
-
-    const nextConfigs = configs.filter(config => config.id !== configId);
-    const nextActiveId = activeConfigId === configId ? nextConfigs[0].id : activeConfigId;
-    setConfigs(nextConfigs);
-    setActiveConfigId(nextActiveId);
-    await persistState(nextConfigs, nextActiveId);
+    await commit(state => {
+      const remaining = state.configs.filter(config => config.id !== configId);
+      const nextConfigs = remaining.length ? remaining : [createProviderConfig(defaultSettings, 1)];
+      return { configs: nextConfigs, activeConfigId: nextConfigs.some(config => config.id === state.activeConfigId) ? state.activeConfigId : nextConfigs[0].id };
+    });
   };
 
   const settings = configToSettings(activeConfig);
-  const isConfigured = settings.apiKey.trim().length > 10 && settings.model.trim().length > 0;
+  const isConfigured = settings.apiKey.trim().length > 0 && settings.model.trim().length > 0;
 
   return (
     <AISettingsContext.Provider

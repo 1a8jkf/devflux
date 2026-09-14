@@ -84,6 +84,8 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
   const [isSearching, setIsSearching] = useState(false);
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const fileLoadSequence = useRef(0);
+  const loadedProjectId = useRef<string | null>(null);
 
   const [isCreating, setIsCreating] = useState<'file'|'folder'|null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -519,6 +521,7 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
       return () => {
         if (debounceTimer) clearTimeout(debounceTimer);
         unsubscribe();
+        fileLoadSequence.current++;
       };
     }
   }, [projectId]);
@@ -572,10 +575,12 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
+    const sequence = ++fileLoadSequence.current;
+    if (loadedProjectId.current !== projectId) setIsLoading(true);
     try {
       const { LiveSyncService } = await import('../services/LiveSyncService');
       const currentProject = await LiveSyncService.getProject(projectId);
+      if (sequence !== fileLoadSequence.current) return;
       if (currentProject) setProjectInfo(currentProject as ProjectInfo);
 
       const isRemoteLiveSync = LiveSyncService.isRemoteSyncProject(projectId, currentProject);
@@ -597,10 +602,13 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
         if (cachedTree.length > 0) return;
       }
 
-      const tree = await FileSystemService.getProjectFileTree(projectId);
+      const tree = await FileSystemService.getProjectFileTree(projectId, { deferDirectories: ['node_modules', '.git'] });
+      if (sequence !== fileLoadSequence.current) return;
+      loadedProjectId.current = projectId;
       setFileTree(tree || []);
       setIsLoading(false);
     } catch (e) {
+      if (sequence !== fileLoadSequence.current) return;
       console.error('loadFiles error:', e);
       setFileTree([]);
       setIsLoading(false);
@@ -646,19 +654,26 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
   // Poll for local file system changes when the current project is not a remote Live Sync view.
   useEffect(() => {
     let interval: NodeJS.Timeout;
+    let active = true;
     if (projectId) {
       import('../services/LiveSyncService').then(({ LiveSyncService }) => {
         const isRemoteLiveSync = LiveSyncService.isRemoteSyncProject(projectId, projectInfo);
-        if (!isRemoteLiveSync) {
-          interval = setInterval(() => {
-            FileSystemService.getProjectFileTree(projectId).then(tree => {
-              setFileTree(tree || []);
-            });
+        if (!isRemoteLiveSync && active) {
+          let reading = false;
+          interval = setInterval(async () => {
+            if (reading || !active) return;
+            reading = true;
+            try {
+              const tree = await FileSystemService.getProjectFileTree(projectId, { deferDirectories: ['node_modules', '.git'] });
+              if (active) setFileTree(tree || []);
+            } catch (error) { console.error('refreshFiles error:', error); }
+            finally { reading = false; }
           }, 2500);
         }
       });
     }
     return () => {
+      active = false;
       if (interval) clearInterval(interval);
     };
   }, [projectId, projectInfo?.type, projectInfo?.liveSyncMode]);
@@ -953,7 +968,9 @@ export const EditorSidebar: React.FC<EditorSidebarProps> = ({ onClose, onOpenDra
         <ActivityIndicator size="small" color={theme.colors.accentBlue} style={{ marginTop: 20 }} />
       ) : (
         <FileTree
+          key={projectId}
           data={fileTree}
+          onLoadChildren={node => FileSystemService.getProjectFileTree(projectId, { relativePath: node.path, shallow: true })}
           dirtyFileIds={editorDirtyFileIdSet}
           onFilePress={handleFilePress}
           onFileLongPress={openNodeActions}
